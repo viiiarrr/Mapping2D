@@ -15,13 +15,13 @@ float distanceVal[NUM_SENSOR];
 // =====================
 #define STEP_PIN 16
 #define DIR_PIN  17
-#define ENABLE_PIN 13   // optional (boleh dihapus kalau tidak pakai)
+#define ENABLE_PIN 12   // pindahin dari 13 (bentrok echo)
 
 // =====================
 // PARAMETER STEPPER
 // =====================
-#define STEPS_PER_REV 200        // tergantung motor (biasanya 200)
-#define STEP_DELAY_US 800        // kecepatan motor
+#define STEPS_PER_REV 200
+#define STEP_DELAY_US 800
 
 int currentStep = 0;
 float currentAngle = 0;
@@ -30,6 +30,8 @@ float currentAngle = 0;
 // FUNGSI ULTRASONIK
 // =====================
 float readUltrasonic(int trigPin, int echoPin) {
+
+  // trigger
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
 
@@ -37,11 +39,10 @@ float readUltrasonic(int trigPin, int echoPin) {
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
 
-  long startTime = micros();
-
   // tunggu echo HIGH
+  long start = micros();
   while (digitalRead(echoPin) == LOW) {
-    if (micros() - startTime > 30000) return -1;
+    if (micros() - start > 30000) return -1;
   }
 
   long echoStart = micros();
@@ -53,7 +54,10 @@ float readUltrasonic(int trigPin, int echoPin) {
 
   long duration = micros() - echoStart;
 
-  float dist = duration * 0.0343 / 2;
+  float dist = duration * 0.0343 / 2.0;
+
+  // filter kasar (noise)
+  if (dist < 2 || dist > 400) return -1;
 
   return dist;
 }
@@ -62,6 +66,7 @@ float readUltrasonic(int trigPin, int echoPin) {
 // STEPPER FUNCTION
 // =====================
 void stepMotor(int steps, bool direction) {
+
   digitalWrite(DIR_PIN, direction);
 
   for (int i = 0; i < steps; i++) {
@@ -74,7 +79,6 @@ void stepMotor(int steps, bool direction) {
     if (currentStep >= STEPS_PER_REV) currentStep = 0;
   }
 
-  // hitung sudut
   currentAngle = (currentStep * 360.0) / STEPS_PER_REV;
 }
 
@@ -88,6 +92,7 @@ void setup() {
   for (int i = 0; i < NUM_SENSOR; i++) {
     pinMode(trigPins[i], OUTPUT);
     pinMode(echoPins[i], INPUT);
+    digitalWrite(trigPins[i], LOW);
   }
 
   // stepper
@@ -104,15 +109,17 @@ void setup() {
 void loop() {
 
   // =====================
-  // 1. BACA SEMUA SENSOR
+  // 1. BACA SENSOR BERGILIRAN
   // =====================
   for (int i = 0; i < NUM_SENSOR; i++) {
+
     distanceVal[i] = readUltrasonic(trigPins[i], echoPins[i]);
-    delay(30); // hindari interferensi
+
+    delay(40);  // penting: hindari cross-talk antar sensor
   }
 
   // =====================
-  // 2. OUTPUT DATA
+  // 2. KIRIM DATA KE RASPI
   // format: angle,d1,d2,...,d8
   // =====================
   Serial.print(currentAngle, 1);
@@ -120,14 +127,18 @@ void loop() {
 
   for (int i = 0; i < NUM_SENSOR; i++) {
     Serial.print(distanceVal[i], 1);
-    if (i < NUM_SENSOR - 1) Serial.print(",");
+
+    if (i < NUM_SENSOR - 1) {
+      Serial.print(",");
+    }
   }
+
   Serial.println();
 
   // =====================
   // 3. GERAKKAN STEPPER
   // =====================
-  stepMotor(5, true);  // 5 step tiap loop
+  stepMotor(5, true);
 
   delay(50);
 }
