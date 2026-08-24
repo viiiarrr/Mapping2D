@@ -48,6 +48,28 @@ void setup() {
 }
 
 void loop() {
+  // ---- MODE TEST 1 SENSOR ----
+  // Kita tes sensor pertama (index 0). Pastikan pin terhubung ke: Trig 4, Echo 34
+  float jarak = ultrasonicArray.read(0);
+
+  String output_str;
+  if (jarak != -1) {
+    output_str = "Jarak Sensor 1: " + String(jarak) + " cm";
+  } else {
+    output_str = "Sensor 1: Tidak Terhubung";
+  }
+
+  // Tampilkan di Serial Monitor
+  Serial.println(output_str);
+
+  // Kirim data ke laptop via UDP (agar bisa dilihat di script Python)
+  udp.beginPacket(laptop_ip, udp_port);
+  udp.print(output_str);
+  udp.endPacket();
+
+  delay(500); // Tunggu setengah detik sebelum membaca ulang
+
+  /* --- KODE LAMA DI-COMMENT DULU AGAR FOKUS TEST SENSOR ---
   // 1. BACA SENSOR BERGILIRAN
   ultrasonicArray.readAll();
 
@@ -112,4 +134,5 @@ void loop() {
   stepper.step(5, true);
 
   delay(50);
+  */
 }

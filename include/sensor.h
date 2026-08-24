@@ -66,6 +66,15 @@ public:
         }
     }
 
+    // Fungsi tambahan untuk membaca hanya satu sensor tertentu
+    float read(int index) {
+        if (index >= 0 && index < NUM_SENSOR) {
+            distanceVal[index] = readSingleUltrasonic(trigPins[index], echoPins[index]);
+            return distanceVal[index];
+        }
+        return -1.0;
+    }
+
     float getDistance(int index) {
         if (index >= 0 && index < NUM_SENSOR) {
             return distanceVal[index];
