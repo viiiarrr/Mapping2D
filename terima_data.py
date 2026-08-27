@@ -20,8 +20,28 @@ try:
         # Data yang diterima berupa bytes, kita decode menjadi string
         pesan = data.decode('utf-8')
         
-        # Menampilkan data yang diterima dari ESP32
-        print(f"Dari {addr[0]}: {pesan}")
+        # Menampilkan pesan asli (mentah)
+        # print(f"Raw data dari {addr[0]}: {pesan}")
+        
+        # Mengekstrak data dari 8 sensor
+        if pesan.startswith("DataSensor:"):
+            try:
+                # Format: "DataSensor:12.5,-1.0,45.2,..."
+                data_str = pesan.replace("DataSensor:", "").strip()
+                jarak_list = data_str.split(",")
+                
+                print("\n=== Data 8 Sensor Ultrasonik ===")
+                for i, jarak in enumerate(jarak_list):
+                    val = float(jarak)
+                    if val == -1.0:
+                        print(f"Sensor {i+1}: Tidak Terhubung / Out of Range")
+                    else:
+                        print(f"Sensor {i+1}: {val} cm")
+                print("================================\n")
+            except Exception as e:
+                print(f"Error parsing data: {e} | Pesan: {pesan}")
+        else:
+            print(f"[Pesan Lain] {pesan}")
         
 except KeyboardInterrupt:
     print("\nProgram dihentikan.")

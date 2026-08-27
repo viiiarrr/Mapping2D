@@ -62,7 +62,7 @@ public:
     void readAll() {
         for (int i = 0; i < NUM_SENSOR; i++) {
             distanceVal[i] = readSingleUltrasonic(trigPins[i], echoPins[i]);
-            delay(40);  // penting: hindari cross-talk antar sensor
+            delay(15);  // Dipercepat (sebelumnya 40ms) agar lebih responsif
         }
     }
 
