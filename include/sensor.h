@@ -23,14 +23,14 @@ private:
         // tunggu echo HIGH
         long start = micros();
         while (digitalRead(echoPin) == LOW) {
-            if (micros() - start > 30000) return -1;
+            if (micros() - start > 24000) return -1;
         }
 
         long echoStart = micros();
 
         // tunggu echo LOW
         while (digitalRead(echoPin) == HIGH) {
-            if (micros() - echoStart > 30000) return -1;
+            if (micros() - echoStart > 24000) return -1;
         }
 
         long duration = micros() - echoStart;
@@ -62,7 +62,7 @@ public:
     void readAll() {
         for (int i = 0; i < NUM_SENSOR; i++) {
             distanceVal[i] = readSingleUltrasonic(trigPins[i], echoPins[i]);
-            delay(15);  // Dipercepat (sebelumnya 40ms) agar lebih responsif
+            delay(20);  // Mengembalikan delay ke 20ms untuk mencegah sinyal suara saling bertabrakan (crosstalk)
         }
     }
 

@@ -1,0 +1,6 @@
+@echo off
+echo Menutup semua Python yang sedang berjalan...
+taskkill /F /IM python.exe /T 2>nul
+timeout /t 2 /nobreak >nul
+echo Menjalankan visualisasi_2d.py...
+"E:\!!Python\Python312\python.exe" visualisasi_2d.py

@@ -11,17 +11,16 @@ private:
     
     // Variabel untuk estimasi sudut (karena servo 360 tidak punya sensor posisi)
     float currentAngle; 
-    float speedDegreesPerSec; 
+    float speedDegreesPerSecCW;   // Kecepatan saat putar CW (deg/s)
+    float speedDegreesPerSecCCW;  // Kecepatan saat putar CCW (deg/s)
 
 public:
     // Constructor
-    Servo360Motor(int pin, float estimatedSpeed = 180.0) {
+    Servo360Motor(int pin, float speedCW = 55.0, float speedCCW = 45.0) {
         servoPin = pin;
         currentAngle = 0.0;
-        // Asumsi kasar kecepatan servo: misal 180 derajat per detik.
-        // Anda HARUS mengkalibrasi nilai ini dengan stopwatch & busur derajat
-        // agar visualisasi 2D nya bisa mendekati akurat.
-        speedDegreesPerSec = estimatedSpeed; 
+        speedDegreesPerSecCW  = speedCW;   // Hasil kalibrasi CW
+        speedDegreesPerSecCCW = speedCCW;  // Hasil kalibrasi CCW
     }
     
     void begin() {
@@ -57,11 +56,11 @@ public:
     // Fungsi pengganti "step" pada Stepper Motor. 
     // Menggunakan delay waktu untuk mengestimasi pergerakan sudut.
     // PENTING: Metode ini tidak akan seakurat Stepper Motor asli.
-    void moveAngle(float targetAngleDelta, bool direction) {
-        // Hitung berapa lama servo harus menyala untuk mencapai target sudut
-        float timeToMoveMs = (targetAngleDelta / speedDegreesPerSec) * 1000.0;
+    void moveAngle(float targetAngleDelta, bool isCW) {
+        float speed = isCW ? speedDegreesPerSecCW : speedDegreesPerSecCCW;
+        float timeToMoveMs = (targetAngleDelta / speed) * 1000.0;
         
-        if (direction) {
+        if (isCW) {
             rotateCW();
             currentAngle += targetAngleDelta;
         } else {
@@ -69,13 +68,11 @@ public:
             currentAngle -= targetAngleDelta;
         }
         
-        // Biarkan servo berputar selama waktu yang dihitung, lalu paksa berhenti
-        delay(timeToMoveMs);
+        delay((int)timeToMoveMs);
         stop();
         
-        // Normalisasi sudut agar selalu berada di antara 0 - 359 derajat
         if (currentAngle >= 360.0) currentAngle = fmod(currentAngle, 360.0);
-        if (currentAngle < 0.0) currentAngle = 360.0 + fmod(currentAngle, 360.0);
+        if (currentAngle < 0.0)   currentAngle = 360.0 + fmod(currentAngle, 360.0);
     }
     
     float getAngle() {

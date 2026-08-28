@@ -16,8 +16,12 @@ class LidarScanner2D:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((self.ip, self.port))
         
-        # Buffer Data: Menggunakan dictionary untuk menyimpan jarak terbaru di setiap sudut derajat (0-359)
-        self.map_data = {}
+        # Buffer Data:
+        # map_data: 1 nilai per sudut (untuk batas ruangan)
+        # all_points_x/y: semua titik mentah (untuk point cloud)
+        self.map_data   = {}
+        self.all_points_x = []
+        self.all_points_y = []
         self.current_angle_deg = 0.0
         self.latest_rays_x = []
         self.latest_rays_y = []
@@ -27,6 +31,11 @@ class LidarScanner2D:
         
         # State Thread
         self.running = True
+        
+        # Flag: Pemetaan selesai (map dikunci, tidak diupdate lagi)
+        # Ruangan tidak bergerak, jadi 1x scan sudah cukup!
+        self.mapping_complete = False
+        self.mapping_locked_at = 0  # Berapa sudut unik sudah terpetakan
         
         # Setup Figure Matplotlib
         self.fig, self.ax = plt.subplots(figsize=(8, 8))
@@ -40,9 +49,9 @@ class LidarScanner2D:
         self.scanner_poly = Polygon([[0,0], [0,0], [0,0]], closed=True, facecolor='red', edgecolor='darkred', alpha=0.8, zorder=10)
         self.ax.add_patch(self.scanner_poly)
         
-        # Pengaturan Tampilan Plot
-        self.ax.set_xlim(-400, 400) # Asumsi maksimal jangkauan HC-SR04 adalah 400cm
-        self.ax.set_ylim(-400, 400)
+        # Pengaturan Tampilan Plot (Batas Zoom diset 1 meter / 100 cm)
+        self.ax.set_xlim(-100, 100) 
+        self.ax.set_ylim(-100, 100)
         self.ax.grid(True, linestyle='--', alpha=0.7)
         self.ax.axhline(0, color='black', linewidth=0.5)
         self.ax.axvline(0, color='black', linewidth=0.5)
@@ -67,51 +76,66 @@ class LidarScanner2D:
                 print(f"[!] Error saat menerima data: {e}")
 
     def parse_and_store_data(self, message):
-        """Tahap 2a: Parsing Data dan Kalkulasi Sudut Absolut"""
+        """Parsing data: sudut platform + offset sensor = arah absolut setiap sensor"""
         try:
-            # Format pesan dari ESP32: servo_angle, dist_1, dist_2, ..., dist_8
-            values = list(map(float, message.split(',')))
-            if len(values) < 9:
-                return
+            parts = message.split(',')
+            if len(parts) == 9:
+                servo_angle = float(parts[0])  # Sudut platform saat ini (dari step servo)
+                self.current_angle_deg = servo_angle
+                distances = [float(x) for x in parts[1:]]
                 
-            servo_angle = values[0]
-            self.current_angle_deg = servo_angle
-            distances = values[1:9]
-            
-            curr_rays_x = []
-            curr_rays_y = []
-            
-            # Waktu terima paket
-            now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-            
-            for i in range(8):
-                dist = distances[i]
+                # Waktu terima paket
+                import datetime, time
+                now_str = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                log_row = [now_str, round(servo_angle, 1)] + [round(d, 1) for d in distances]
+                self.record_log.append(log_row)
                 
-                # Menghitung sudut aktual (sensor ke-i dipasang berjarak 45 derajat)
-                actual_angle_deg = (servo_angle + (i * 45)) % 360
+                curr_rays_x = [0]
+                curr_rays_y = [0]
                 
-                # Simpan titik sinar untuk digambar (jika valid)
-                if dist > 0 and dist <= 400:
-                    rad = np.radians(actual_angle_deg)
-                    x = dist * np.cos(rad)
-                    y = dist * np.sin(rad)
-                    curr_rays_x.extend([0, x, None])
-                    curr_rays_y.extend([0, y, None])
+                for i in range(8):
+                    dist = distances[i]
+                    # Sudut absolut = sudut platform + offset posisi sensor di piringan
+                    # Sensor 0 = platform angle, Sensor 1 = platform angle + 45°, dst.
+                    actual_angle_deg = (servo_angle + (i * 45)) % 360
+                    angle_rad = np.radians(actual_angle_deg)
                     
-                    # Tambahkan data ini ke dalam log rekaman
-                    self.record_log.append([now_str, round(actual_angle_deg, 1), dist, round(x, 2), round(y, 2)])
-                
-                # Mengabaikan pembacaan error (misal 0 atau di luar jangkauan sensor > 400cm)
-                if dist <= 0 or dist > 400:
-                    continue
+                    # Update garis sinar
+                    if dist > 0 and dist <= 400:
+                        curr_rays_x.extend([dist * np.cos(angle_rad), 0])
+                        curr_rays_y.extend([dist * np.sin(angle_rad), 0])
                     
-                # Menyimpan jarak pada sudut yang dibulatkan ke integer (0-359 derajat)
-                # Ini otomatis memperbarui (overwrite) pemetaan saat piringan menyapu area yang sama
-                idx = int(round(actual_angle_deg)) % 360
-                self.map_data[idx] = dist
+                    # Simpan ke peta dengan EMA filter untuk mengurangi noise
+                    # HANYA update jika pemetaan belum selesai!
+                    if not self.mapping_complete:
+                        if dist > 0 and dist <= 400:
+                            idx = int(round(actual_angle_deg)) % 360
+                            if idx in self.map_data:
+                                old_dist, _ = self.map_data[idx]
+                                dist_ema = 0.7 * old_dist + 0.3 * dist
+                            else:
+                                dist_ema = dist
+                            self.map_data[idx] = (dist_ema, time.time())
+                            
+                            # Simpan juga ke all_points untuk point cloud yang dense
+                            x_pt = dist * np.cos(angle_rad)
+                            y_pt = dist * np.sin(angle_rad)
+                            self.all_points_x.append(x_pt)
+                            self.all_points_y.append(y_pt)
+                            # Batasi maksimal 5000 titik agar tidak berat
+                            if len(self.all_points_x) > 5000:
+                                self.all_points_x = self.all_points_x[-5000:]
+                                self.all_points_y = self.all_points_y[-5000:]
+                    
+                        # Cek apakah 1 putaran penuh sudah selesai (min 300 sudut unik terpetakan)
+                        if len(self.map_data) >= 300 and not self.mapping_complete:
+                            self.mapping_complete = True
+                            self.mapping_locked_at = len(self.map_data)
+                            print(f"\n[✓] PEMETAAN SELESAI! {self.mapping_locked_at} sudut terpetakan.")
+                            print(f"    Map DIKUNCI - ruangan tidak akan bergerak lagi!")
                 
-            self.latest_rays_x = curr_rays_x
-            self.latest_rays_y = curr_rays_y
+                self.latest_rays_x = curr_rays_x
+                self.latest_rays_y = curr_rays_y
                 
         except ValueError:
             pass
@@ -146,17 +170,42 @@ class LidarScanner2D:
         y_smooth = savgol_filter(y_arr, window_length=window, polyorder=poly)
         return x_smooth, y_smooth
 
+    def spatial_clustering(self, x_arr, y_arr, threshold=30.0):
+        """Metode Spatial Clustering yang disempurnakan (Anchor/Kunci) agar titik DIAM SEMPURNA (Tanpa Jitter)"""
+        if len(x_arr) == 0:
+            return [], []
+            
+        clustered_x = []
+        clustered_y = []
+        
+        for x, y in zip(x_arr, y_arr):
+            found_cluster = False
+            for cx, cy in zip(clustered_x, clustered_y):
+                # Jika titik ini berdekatan dengan cluster yang sudah ada
+                if np.hypot(x - cx, y - cy) < threshold:
+                    found_cluster = True
+                    # Titik ini "disedot" ke cluster yang sudah ada, JANGAN ubah pusat clusternya
+                    break
+                    
+            if not found_cluster:
+                # Bikin cluster baru dan KUNCI posisinya di titik ini
+                # Karena posisinya dikunci (tidak di rata-rata), titik di layar tidak akan bergetar/bergerak sama sekali
+                clustered_x.append(x)
+                clustered_y.append(y)
+                
+        return clustered_x, clustered_y
+
     def update_plot(self, frame):
         """Tahap 3: Pemrosesan Plotting Visualisasi 2D Real-Time"""
         
         # 1. Update arah kepala scanner (Segitiga Merah)
         angle_rad = np.radians(self.current_angle_deg)
-        tip_x = 30 * np.cos(angle_rad)
-        tip_y = 30 * np.sin(angle_rad)
-        left_x = 10 * np.cos(angle_rad + np.pi/2)
-        left_y = 10 * np.sin(angle_rad + np.pi/2)
-        right_x = 10 * np.cos(angle_rad - np.pi/2)
-        right_y = 10 * np.sin(angle_rad - np.pi/2)
+        tip_x = 10 * np.cos(angle_rad)
+        tip_y = 10 * np.sin(angle_rad)
+        left_x = 3 * np.cos(angle_rad + np.pi/2)
+        left_y = 3 * np.sin(angle_rad + np.pi/2)
+        right_x = 3 * np.cos(angle_rad - np.pi/2)
+        right_y = 3 * np.sin(angle_rad - np.pi/2)
         self.scanner_poly.set_xy([[left_x, left_y], [tip_x, tip_y], [right_x, right_y]])
         
         # 2. Update Sinar Sensor (Garis Biru)
@@ -165,32 +214,49 @@ class LidarScanner2D:
         if not self.map_data:
             return self.scatter_raw, self.line_smooth, self.rays_lines, self.scanner_poly
             
-        # Mengekstrak sudut yang sudah terurut dari 0-359 derajat dari buffer dictionary
-        angles_deg = sorted(self.map_data.keys())
-        distances = [self.map_data[a] for a in angles_deg]
+        import time
+        current_time = time.time()
         
-        angles_rad_map = np.radians(angles_deg)
-        dists = np.array(distances)
+        n_angles = len(self.map_data)
         
-        # Tahap 2b: Homogeneous Transformation Matrix (Konversi Polar ke Kartesius 2D)
-        x_raw = dists * np.cos(angles_rad_map)
-        y_raw = dists * np.sin(angles_rad_map)
-        
-        # Menerapkan Filter NWA untuk membersihkan outlier
-        # Threshold dinaikkan menjadi 250 agar sudut tajam segitiga tidak dianggap sebagai error dan dibuang
-        x_nwa, y_nwa = self.filter_nwa(x_raw, y_raw, threshold=250.0)
-        
-        # Memperbarui data untuk scatter plot (titik merah)
-        self.scatter_raw.set_data(x_nwa, y_nwa)
-        
-        # Menerapkan Filter Savitzky-Golay untuk membuat garis dinding yang halus
-        if len(x_nwa) >= 11: 
-            x_smooth, y_smooth = self.apply_savgol_filter(x_nwa, y_nwa, window=11, poly=3)
-            self.line_smooth.set_data(x_smooth, y_smooth)
-        else:
+        # =====================================================
+        # FASE 1: Tunjukkan titik-titik yang sedang terkumpul
+        # =====================================================
+        if n_angles < 200:
+            # Tampilkan semua titik mentah yang sudah terkumpul
+            self.scatter_raw.set_data(self.all_points_x, self.all_points_y)
             self.line_smooth.set_data([], [])
-            
+            self.ax.set_title(f"Mengumpulkan data... ({n_angles}/360 sudut)", fontsize=13)
+            return self.scatter_raw, self.line_smooth, self.rays_lines, self.scanner_poly
+        
+        # =====================================================
+        # FASE 2: Data cukup → Tampilkan titik + batas ruangan
+        # =====================================================
+        self.ax.set_title("Peta 2D Ruangan (SELESAI)", fontsize=14, fontweight='bold', color='green')
+        
+        # Tampilkan semua titik mentah (point cloud dense)
+        self.scatter_raw.set_data(self.all_points_x, self.all_points_y)
+        
+        # Buat garis batas ruangan dari data map (1 nilai per sudut, sudah EMA)
+        sorted_angles = sorted(self.map_data.keys())
+        sorted_dists  = [self.map_data[a][0] for a in sorted_angles]
+        
+        angles_rad = np.radians(sorted_angles)
+        dists_arr  = np.array(sorted_dists)
+        
+        # Koordinat kartesius titik batas dinding
+        wall_x = dists_arr * np.cos(angles_rad)
+        wall_y = dists_arr * np.sin(angles_rad)
+        
+        # Tutup poligon dan gambar batas ruangan (merah tebal, seperti referensi)
+        closed_x = np.append(wall_x, wall_x[0])
+        closed_y = np.append(wall_y, wall_y[0])
+        self.line_smooth.set_data(closed_x, closed_y)
+        self.line_smooth.set_color('red')
+        self.line_smooth.set_linewidth(2.5)
+        
         return self.scatter_raw, self.line_smooth, self.rays_lines, self.scanner_poly
+
 
     def save_data(self):
         """Menyimpan log koordinat dan gambar grafik ke dalam folder percobaan"""
@@ -215,7 +281,7 @@ class LidarScanner2D:
         try:
             with open(csv_path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(["Waktu", "Sudut_Derajat", "Jarak_cm", "Koordinat_X", "Koordinat_Y"])
+                writer.writerow(["Waktu", "Sudut_Servo", "Sensor_1", "Sensor_2", "Sensor_3", "Sensor_4", "Sensor_5", "Sensor_6", "Sensor_7", "Sensor_8"])
                 writer.writerows(self.record_log)
         except Exception as e:
             print(f"[!] Gagal menyimpan CSV: {e}")
