@@ -76,11 +76,11 @@ class LidarScanner2D:
                 print(f"[!] Error saat menerima data: {e}")
 
     def parse_and_store_data(self, message):
-        """Parsing data: sudut platform + offset sensor = arah absolut setiap sensor"""
+        """Parsing data dan implementasi Real-Time Spatial Clustering"""
         try:
             parts = message.split(',')
             if len(parts) == 9:
-                servo_angle = float(parts[0])  # Sudut platform saat ini (dari step servo)
+                servo_angle = float(parts[0])  
                 self.current_angle_deg = servo_angle
                 distances = [float(x) for x in parts[1:]]
                 
@@ -95,44 +95,49 @@ class LidarScanner2D:
                 
                 for i in range(8):
                     dist = distances[i]
-                    # Sudut absolut = sudut platform + offset posisi sensor di piringan
-                    # Sensor 0 = platform angle, Sensor 1 = platform angle + 45°, dst.
                     actual_angle_deg = (servo_angle + (i * 45)) % 360
                     angle_rad = np.radians(actual_angle_deg)
                     
-                    # Update garis sinar
-                    if dist > 0 and dist <= 400:
+                    # Filter dasar: Abaikan jarak 0 atau di atas 400 cm (di luar jangkauan HC-SR04)
+                    if dist > 2 and dist <= 400:
+                        # 1. Update garis sinar biru
                         curr_rays_x.extend([dist * np.cos(angle_rad), 0])
                         curr_rays_y.extend([dist * np.sin(angle_rad), 0])
                     
-                    # Simpan ke peta dengan EMA filter untuk mengurangi noise
-                    # HANYA update jika pemetaan belum selesai!
-                    if not self.mapping_complete:
-                        if dist > 0 and dist <= 400:
-                            idx = int(round(actual_angle_deg)) % 360
-                            if idx in self.map_data:
-                                old_dist, _ = self.map_data[idx]
-                                dist_ema = 0.7 * old_dist + 0.3 * dist
-                            else:
-                                dist_ema = dist
-                            self.map_data[idx] = (dist_ema, time.time())
-                            
-                            # Simpan juga ke all_points untuk point cloud yang dense
+                        # 2. Proses Pemetaan (Jika belum dikunci)
+                        if not self.mapping_complete:
                             x_pt = dist * np.cos(angle_rad)
                             y_pt = dist * np.sin(angle_rad)
-                            self.all_points_x.append(x_pt)
-                            self.all_points_y.append(y_pt)
-                            # Batasi maksimal 5000 titik agar tidak berat
-                            if len(self.all_points_x) > 5000:
-                                self.all_points_x = self.all_points_x[-5000:]
-                                self.all_points_y = self.all_points_y[-5000:]
-                    
-                        # Cek apakah 1 putaran penuh sudah selesai (min 300 sudut unik terpetakan)
+                            
+                            # METODE BARU: Real-Time Spatial Clustering (Anchor)
+                            # Jangan gunakan EMA. Kita gabungkan titik berdekatan.
+                            threshold_cm = 15.0 # Jarak toleransi penggabungan titik
+                            found_cluster = False
+                            
+                            # Cek apakah titik baru ini dekat dengan titik yang sudah ada
+                            for idx in range(len(self.all_points_x)):
+                                cx = self.all_points_x[idx]
+                                cy = self.all_points_y[idx]
+                                
+                                if np.hypot(x_pt - cx, y_pt - cy) < threshold_cm:
+                                    found_cluster = True
+                                    # Titik disedot ke cluster lama, tidak perlu tambah titik baru
+                                    break
+                                    
+                            if not found_cluster:
+                                # Jika ini area baru, simpan sebagai jangkar (anchor) permanen
+                                self.all_points_x.append(x_pt)
+                                self.all_points_y.append(y_pt)
+                                
+                                # Simpan juga untuk batas garis akhir (Polygon)
+                                map_idx = int(round(actual_angle_deg)) % 360
+                                self.map_data[map_idx] = (dist, time.time())
+                        
+                        # Cek apakah ruangan sudah cukup terpetakan
                         if len(self.map_data) >= 300 and not self.mapping_complete:
                             self.mapping_complete = True
                             self.mapping_locked_at = len(self.map_data)
                             print(f"\n[✓] PEMETAAN SELESAI! {self.mapping_locked_at} sudut terpetakan.")
-                            print(f"    Map DIKUNCI - ruangan tidak akan bergerak lagi!")
                 
                 self.latest_rays_x = curr_rays_x
                 self.latest_rays_y = curr_rays_y
