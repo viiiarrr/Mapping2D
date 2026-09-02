@@ -16,15 +16,18 @@ class LidarScanner2D:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((self.ip, self.port))
         
-        # Buffer Data:
-        # map_data: 1 nilai per sudut (untuk batas ruangan)
-        # all_points_x/y: semua titik mentah (untuk point cloud)
         self.map_data   = {}
         self.all_points_x = []
         self.all_points_y = []
         self.current_angle_deg = 0.0
         self.latest_rays_x = []
         self.latest_rays_y = []
+        
+        # Variabel untuk 1D Polar SLAM (Scan Matching)
+        self.reference_map = np.zeros(360) 
+        self.global_drift = 0.0 
+        self.local_scan_buffer = [] 
+        self.last_align_angle = 0.0
         
         # Buffer untuk rekaman data log (CSV)
         self.record_log = []
@@ -90,60 +93,92 @@ class LidarScanner2D:
                 log_row = [now_str, round(servo_angle, 1)] + [round(d, 1) for d in distances]
                 self.record_log.append(log_row)
                 
-                curr_rays_x = [0]
-                curr_rays_y = [0]
-                
                 for i in range(8):
                     dist = distances[i]
-                    actual_angle_deg = (servo_angle + (i * 45)) % 360
-                    angle_rad = np.radians(actual_angle_deg)
-                    
-                    # Filter dasar: Abaikan jarak 0 atau di atas 400 cm (di luar jangkauan HC-SR04)
+                    # Filter dasar: Abaikan jarak 0 atau di atas 400 cm
                     if dist > 2 and dist <= 400:
-                        # 1. Update garis sinar biru
-                        curr_rays_x.extend([dist * np.cos(angle_rad), 0])
-                        curr_rays_y.extend([dist * np.sin(angle_rad), 0])
-                    
-                        # 2. Proses Pemetaan (Jika belum dikunci)
-                        if not self.mapping_complete:
-                            x_pt = dist * np.cos(angle_rad)
-                            y_pt = dist * np.sin(angle_rad)
-                            
-                            # METODE BARU: Real-Time Spatial Clustering (Anchor)
-                            # Jangan gunakan EMA. Kita gabungkan titik berdekatan.
-                            threshold_cm = 15.0 # Jarak toleransi penggabungan titik
-                            found_cluster = False
-                            
-                            # Cek apakah titik baru ini dekat dengan titik yang sudah ada
-                            for idx in range(len(self.all_points_x)):
-                                cx = self.all_points_x[idx]
-                                cy = self.all_points_y[idx]
-                                
-                                if np.hypot(x_pt - cx, y_pt - cy) < threshold_cm:
-                                    found_cluster = True
-                                    # Titik disedot ke cluster lama, tidak perlu tambah titik baru
-                                    break
-                                    
-                            if not found_cluster:
-                                # Jika ini area baru, simpan sebagai jangkar (anchor) permanen
-                                self.all_points_x.append(x_pt)
-                                self.all_points_y.append(y_pt)
-                                
-                                # Simpan juga untuk batas garis akhir (Polygon)
-                                map_idx = int(round(actual_angle_deg)) % 360
-                                self.map_data[map_idx] = (dist, time.time())
-                        
-                        # Cek apakah ruangan sudah cukup terpetakan
-                        if len(self.map_data) >= 300 and not self.mapping_complete:
-                            self.mapping_complete = True
-                            self.mapping_locked_at = len(self.map_data)
-                            print(f"\n[✓] PEMETAAN SELESAI! {self.mapping_locked_at} sudut terpetakan.")
+                        raw_angle_deg = (servo_angle + (i * 45)) % 360
+                        self.local_scan_buffer.append((raw_angle_deg, dist))
                 
-                self.latest_rays_x = curr_rays_x
-                self.latest_rays_y = curr_rays_y
+                # Cek pergerakan sudut sejak alignment terakhir
+                angle_diff = min((servo_angle - self.last_align_angle) % 360, (self.last_align_angle - servo_angle) % 360)
+                
+                # Eksekusi SLAM/Alignment setiap pergerakan 15 derajat ATAU jika buffer sudah cukup banyak
+                if angle_diff >= 15.0 and len(self.local_scan_buffer) >= 16:
+                    self._align_and_merge_scan()
+                    self.last_align_angle = servo_angle
                 
         except ValueError:
             pass
+
+    def _align_and_merge_scan(self):
+        filled_count = np.count_nonzero(self.reference_map)
+        best_offset = 0.0
+        
+        # Lakukan Scan Matching HANYA JIKA peta acuan sudah lumayan terbentuk (misal > 30 sudut)
+        if filled_count > 30: 
+            min_error = float('inf')
+            
+            # Cari offset optimal dari -30 hingga +30 derajat
+            for offset in np.arange(-30, 31, 1.0):
+                error = 0.0
+                valid_pts = 0
+                for raw_angle, dist in self.local_scan_buffer:
+                    test_angle = int((raw_angle + self.global_drift + offset) % 360)
+                    ref_dist = self.reference_map[test_angle]
+                    
+                    if ref_dist > 0:
+                        error += abs(dist - ref_dist)
+                        valid_pts += 1
+                        
+                if valid_pts > 5:
+                    avg_error = error / valid_pts
+                    if avg_error < min_error:
+                        min_error = avg_error
+                        best_offset = offset
+                        
+            # Jika error cukup masuk akal, terapkan offset sebagai koreksi drift baru
+            if min_error < 50.0: 
+                self.global_drift = (self.global_drift + best_offset) % 360
+                
+        # 2. Gabungkan data yang sudah dikoreksi ke Reference Map dan Plot
+        curr_rays_x = [0]
+        curr_rays_y = [0]
+        
+        for raw_angle, dist in self.local_scan_buffer:
+            corrected_angle = (raw_angle + self.global_drift) % 360
+            angle_rad = np.radians(corrected_angle)
+            
+            # Update Reference Map menggunakan perataan (Moving Average) ringan
+            idx = int(corrected_angle) % 360
+            if self.reference_map[idx] == 0:
+                self.reference_map[idx] = dist
+            else:
+                self.reference_map[idx] = (0.7 * self.reference_map[idx]) + (0.3 * dist)
+                
+            # Tambahkan ke point cloud untuk digambar (visualisasi)
+            x_pt = dist * np.cos(angle_rad)
+            y_pt = dist * np.sin(angle_rad)
+            self.all_points_x.append(x_pt)
+            self.all_points_y.append(y_pt)
+            
+            # Simpan juga ke map_data agar bisa digambar Polygon/Garis batasnya
+            self.map_data[idx] = (self.reference_map[idx], 0) 
+            
+            # Hanya tampilkan ray (garis biru laser) dari batch terbaru untuk animasi
+            curr_rays_x.extend([x_pt, 0])
+            curr_rays_y.extend([y_pt, 0])
+            
+        self.latest_rays_x = curr_rays_x
+        self.latest_rays_y = curr_rays_y
+        
+        # Kosongkan buffer untuk iterasi selanjutnya
+        self.local_scan_buffer.clear()
+        
+        # Batasi memori point cloud agar komputer tidak lag (maksimal 2000 titik)
+        if len(self.all_points_x) > 2000:
+            self.all_points_x = self.all_points_x[-2000:]
+            self.all_points_y = self.all_points_y[-2000:]
 
     def filter_nwa(self, x_arr, y_arr, threshold=30.0):
         """Tahap 2c: Filter Nominal Wall Angle (NWA) / Menghapus Phantom Points"""
@@ -217,7 +252,7 @@ class LidarScanner2D:
         self.rays_lines.set_data(self.latest_rays_x, self.latest_rays_y)
         
         if not self.map_data:
-            return self.scatter_raw, self.line_smooth, self.rays_lines, self.scanner_poly
+            return self.scatter_raw, self.line_smooth, self.rays_lines, self.scanner_poly, self.ax.title
             
         import time
         current_time = time.time()
@@ -227,17 +262,17 @@ class LidarScanner2D:
         # =====================================================
         # FASE 1: Tunjukkan titik-titik yang sedang terkumpul
         # =====================================================
-        if n_angles < 200:
+        if n_angles < 180:
             # Tampilkan semua titik mentah yang sudah terkumpul
             self.scatter_raw.set_data(self.all_points_x, self.all_points_y)
             self.line_smooth.set_data([], [])
-            self.ax.set_title(f"Mengumpulkan data... ({n_angles}/360 sudut)", fontsize=13)
-            return self.scatter_raw, self.line_smooth, self.rays_lines, self.scanner_poly
+            self.ax.set_title(f"Membangun Peta Acuan... ({n_angles}/360 sudut)", fontsize=13)
+            return self.scatter_raw, self.line_smooth, self.rays_lines, self.scanner_poly, self.ax.title
         
         # =====================================================
         # FASE 2: Data cukup → Tampilkan titik + batas ruangan
         # =====================================================
-        self.ax.set_title("Peta 2D Ruangan (SELESAI)", fontsize=14, fontweight='bold', color='green')
+        self.ax.set_title(f"SLAM Aktif (Mengoreksi Rotasi Real-Time) - Drift: {self.global_drift:.1f}°", fontsize=14, fontweight='bold', color='green')
         
         # Tampilkan semua titik mentah (point cloud dense)
         self.scatter_raw.set_data(self.all_points_x, self.all_points_y)
@@ -254,13 +289,11 @@ class LidarScanner2D:
         wall_y = dists_arr * np.sin(angles_rad)
         
         # Tutup poligon dan gambar batas ruangan (merah tebal, seperti referensi)
-        closed_x = np.append(wall_x, wall_x[0])
-        closed_y = np.append(wall_y, wall_y[0])
-        self.line_smooth.set_data(closed_x, closed_y)
-        self.line_smooth.set_color('red')
-        self.line_smooth.set_linewidth(2.5)
+        # BUG FIX: Kita nonaktifkan garis batas (polygon) karena jika ada sudut yang terlewat, 
+        # garisnya akan melintang membelah tengah ruangan dan membuat visual menjadi acak-acakan.
+        self.line_smooth.set_data([], [])
         
-        return self.scatter_raw, self.line_smooth, self.rays_lines, self.scanner_poly
+        return self.scatter_raw, self.line_smooth, self.rays_lines, self.scanner_poly, self.ax.title
 
 
     def save_data(self):

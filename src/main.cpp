@@ -38,14 +38,31 @@ const int echoPins[NUM_SENSOR] = {18, 35, 34, 32, 33, 26, 14, 13};
 #define SETTLE_DELAY_MS    150
 
 // =====================
+// KONFIGURASI HOMING
+// =====================
+#define HOMING_PIN         15
+volatile unsigned long sweepStartTime = 0;
+unsigned long sweepDurationMsCW = 0;
+unsigned long sweepDurationMsCCW = 0;
+
+enum MotorState { DIR_CW, DIR_CCW };
+MotorState currentState = DIR_CW;
+unsigned long stateStartTime = 0;
+
+// =====================
 // OBJEK
 // =====================
 Servo360Motor servo(SERVO_PIN, SERVO_SPEED_CW, SERVO_SPEED_CCW);
 Sensor ultrasonicArray(trigPins, echoPins);
 
 float currentAngle = 0.0;   // Sudut platform saat ini (0-359°)
-int   stepCount    = 0;      // Hitungan langkah dalam 1 putaran
-const int TOTAL_STEPS = (int)(360.0 / STEP_DEG); // = 72
+
+void IRAM_ATTR homingISR() {
+  // Debounce sederhana 500ms agar tidak double trigger saat menyentuh switch
+  if (millis() - sweepStartTime > 500) {
+    sweepStartTime = millis();
+  }
+}
 
 void bacaDanKirim() {
   ultrasonicArray.readAll();
@@ -65,8 +82,7 @@ void bacaDanKirim() {
     udp.endPacket();
   }
 
-  Serial.println("["  + String(stepCount) + "/" + String(TOTAL_STEPS) +
-                 "] " + String(currentAngle, 1) + "deg | " + out);
+  Serial.println("Sudut: " + String(currentAngle, 1) + "deg | " + out);
 }
 
 void setup() {
@@ -83,45 +99,72 @@ void setup() {
     : "\nWi-Fi GAGAL. Lanjut tanpa WiFi...");
 
   ultrasonicArray.begin();
+  
+  // Konfigurasi Homing
+  pinMode(HOMING_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(HOMING_PIN), homingISR, FALLING);
+  sweepDurationMsCW = (unsigned long)((360.0 / SERVO_SPEED_CW) * 1000.0);
+  sweepDurationMsCCW = (unsigned long)((360.0 / SERVO_SPEED_CCW) * 1000.0);
+  
   servo.begin();   // Servo berhenti dulu
   delay(1500);     // Tunggu servo benar-benar diam
   servo.resetAngle();
   currentAngle = 0.0;
-  stepCount    = 0;
 
-  Serial.println("=== MULAI PEMETAAN 360 DERAJAT ===");
-  Serial.println("Step: " + String(STEP_DEG) + " deg | Total: " + String(TOTAL_STEPS) + " langkah");
+  Serial.println("=== MULAI PEMETAAN BOLAK-BALIK (2x KANAN, 2x KIRI) ===");
+  stateStartTime = millis();
+  sweepStartTime = millis();
+  currentState = DIR_CW;
+  servo.rotateCW();
 }
 
-bool mappingSelesai = false;
-
 void loop() {
-  if (mappingSelesai) {
-    delay(1000);
-    return;
-  }
-
-  Serial.println("=== MULAI PEMETAAN 360 DERAJAT (CONTINUOUS) ===");
+  unsigned long timeInState = millis() - stateStartTime;
   
-  // Hitung waktu yang dibutuhkan untuk 1 putaran penuh (360 derajat)
-  unsigned long sweepDurationMs = (360.0 / SERVO_SPEED_CW) * 1000.0;
-  unsigned long startTime = millis();
-  
-  // Mulai putar servo
-  servo.rotateCW();
-  
-  while (millis() - startTime <= sweepDurationMs) {
-    // 1. Hitung sudut saat ini berdasarkan waktu berlalu (Time-based dead reckoning)
-    float elapsedTimeSec = (millis() - startTime) / 1000.0;
-    currentAngle = elapsedTimeSec * SERVO_SPEED_CW;
+  if (currentState == DIR_CW) {
+    // Cek apakah sudah 2 putaran (2 * sweepDurationMsCW)
+    if (timeInState >= 2 * sweepDurationMsCW) {
+      Serial.println(">> Berbalik arah ke KIRI (CCW)");
+      currentState = DIR_CCW;
+      
+      // Beri jeda sejenak agar piringan tidak membal/rusak akibat inersia mendadak
+      servo.stop();
+      delay(500);
+      
+      stateStartTime = millis();
+      sweepStartTime = millis();
+      servo.rotateCCW();
+      return;
+    }
     
-    // 2. Baca sensor & kirim UDP secepat mungkin saat sedang berputar
-    bacaDanKirim();
+    // Hitung sudut saat ini berdasarkan waktu berlalu (modulo waktu 1 putaran CW)
+    unsigned long timeElapsed = (millis() - sweepStartTime) % sweepDurationMsCW;
+    currentAngle = ((float)timeElapsed / sweepDurationMsCW) * 360.0;
+    
+  } else {
+    // Cek apakah sudah 2 putaran (2 * sweepDurationMsCCW)
+    if (timeInState >= 2 * sweepDurationMsCCW) {
+      Serial.println(">> Berbalik arah ke KANAN (CW)");
+      currentState = DIR_CW;
+      
+      // Beri jeda sejenak agar piringan tidak membal/rusak akibat inersia mendadak
+      servo.stop();
+      delay(500);
+      
+      stateStartTime = millis();
+      sweepStartTime = millis();
+      servo.rotateCW();
+      return;
+    }
+    
+    // Hitung sudut saat ini (berjalan mundur dari 360 ke 0)
+    unsigned long timeElapsed = (millis() - sweepStartTime) % sweepDurationMsCCW;
+    currentAngle = 360.0 - (((float)timeElapsed / sweepDurationMsCCW) * 360.0);
   }
   
-  // Putaran selesai, hentikan servo
-  servo.stop();
-  mappingSelesai = true;
+  // Baca sensor & kirim UDP secara konstan
+  bacaDanKirim();
   
-  Serial.println("=== 1 PUTARAN SELESAI. MAP DIKUNCI. ===");
+  // Jeda sangat singkat untuk stabilitas pengiriman UDP
+  delay(20);
 }
