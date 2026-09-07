@@ -10,15 +10,21 @@ Stabilitas peta:
   - Peta disimpan per derajat (0-359) dengan EMA
   - Scatter & boundary digambar DARI stable_map (bukan raw points)
   - Obstacle tidak bergerak karena tiap derajat dirata-rata
+
+Wall Fitting & Phantom Point Detection (kontribusi skripsi):
+  - Split-and-Merge membagi point cloud menjadi segmen-segmen dinding
+  - RANSAC fitting per segmen → garis nominal wall (merah)
+  - Titik yang jauh dari garis = phantom point (oranye)
 """
 
 import socket, threading, numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.collections as mc
 from matplotlib.animation import FuncAnimation
 import os, csv, datetime
 
 # =====================
-# KONFIGURASI
+# KONFIGURASI UMUM
 # =====================
 UDP_IP        = "0.0.0.0"
 UDP_PORT      = 5005
@@ -29,12 +35,161 @@ MAX_DIST      = 250.0   # Filter jarak maksimum (cm)
 MIN_DIST      = 2.0     # Filter jarak minimum (cm)
 
 # Filter outlier per sudut
-# Jika nilai baru menyimpang lebih dari OUTLIER_SIGMA x std_dev dari median
-# histori sudut itu, data tersebut DIBUANG (tidak dimasukkan ke EMA)
 OUTLIER_SIGMA  = 2.0    # Toleransi deviasi standar
-OUTLIER_WINDOW = 10     # Jumlah sampel histori per sudut untuk filter
+OUTLIER_WINDOW = 10     # Jumlah sampel histori per sudut
 
 MIN_COUNT = 4           # Sudut harus diukur minimal N kali agar ditampilkan
+
+# =====================
+# KONFIGURASI WALL FITTING & PHANTOM DETECTION
+# =====================
+# Split-and-Merge
+SPLIT_THRESHOLD   = 8.0   # cm — jarak maksimum titik ke garis sebelum split
+MIN_SEGMENT_PTS   = 6     # Jumlah titik minimum agar segmen dianggap dinding
+
+# RANSAC per segmen
+RANSAC_ITER       = 60    # Jumlah iterasi RANSAC
+RANSAC_INLIER_THR = 6.0   # cm — jarak titik ke garis agar dianggap inlier
+
+# Phantom point
+PHANTOM_DIST_THR  = 8.0   # cm — jarak titik ke wall line → phantom jika > ini
+
+
+# ──────────────────────────────────────────────────────────────
+# FUNGSI BANTU GEOMETRI
+# ──────────────────────────────────────────────────────────────
+
+def _point_to_line_dist(px, py, x1, y1, x2, y2):
+    """Jarak tegak lurus titik (px,py) ke garis melalui (x1,y1)-(x2,y2)."""
+    dx, dy = x2 - x1, y2 - y1
+    len2   = dx*dx + dy*dy
+    if len2 == 0:
+        return np.hypot(px - x1, py - y1)
+    t = ((px - x1)*dx + (py - y1)*dy) / len2
+    return np.hypot(px - (x1 + t*dx), py - (y1 + t*dy))
+
+
+def _ransac_line(pts):
+    """
+    Fit garis terbaik dari sekumpulan titik menggunakan RANSAC.
+    Kembalikan (a, b, c) koefisien garis  ax + by + c = 0  (ternormalisasi)
+    dan mask inlier (boolean array).
+    Jika gagal, kembalikan None, None.
+    """
+    if len(pts) < 2:
+        return None, None
+
+    xs, ys = pts[:, 0], pts[:, 1]
+    best_inliers = None
+    best_count   = 0
+    rng = np.random.default_rng(42)
+
+    for _ in range(RANSAC_ITER):
+        i, j = rng.choice(len(pts), 2, replace=False)
+        x1, y1 = xs[i], ys[i]
+        x2, y2 = xs[j], ys[j]
+        dx, dy = x2 - x1, y2 - y1
+        if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+            continue
+        a, b, c = dy, -dx, dx*y1 - dy*x1
+        norm = np.hypot(a, b)
+        dists = np.abs(a*xs + b*ys + c) / norm
+        inliers = dists < RANSAC_INLIER_THR
+        cnt = inliers.sum()
+        if cnt > best_count:
+            best_count   = cnt
+            best_inliers = inliers
+
+    if best_inliers is None or best_count < 2:
+        return None, None
+
+    # Re-fit dengan semua inlier via SVD (lebih akurat)
+    pts_in = pts[best_inliers]
+    cx, cy = pts_in[:, 0].mean(), pts_in[:, 1].mean()
+    M = np.column_stack([pts_in[:, 0] - cx, pts_in[:, 1] - cy])
+    _, _, Vt = np.linalg.svd(M)
+    dx, dy = Vt[0]
+    a, b, c = dy, -dx, -(dy*cx - dx*cy)
+    norm_ab = np.hypot(a, b)
+    if norm_ab == 0:
+        return None, None
+    return (a/norm_ab, b/norm_ab, c/norm_ab), best_inliers
+
+
+def _split_and_merge(pts_idx, points, depth=0):
+    """
+    Rekursif Split-and-Merge.
+    pts_idx : list/array indeks ke array `points`.
+    Kembalikan list segmen (tiap segmen = array indeks).
+    """
+    if len(pts_idx) < 2:
+        return [np.array(pts_idx)] if len(pts_idx) >= MIN_SEGMENT_PTS else []
+
+    idx = np.array(pts_idx)
+    seg = points[idx]
+    x1, y1 = seg[0]
+    x2, y2 = seg[-1]
+
+    dists = np.array([_point_to_line_dist(p[0], p[1], x1, y1, x2, y2)
+                      for p in seg])
+    max_d = dists.max()
+    max_i = dists.argmax()
+
+    if max_d > SPLIT_THRESHOLD and depth < 12:
+        left  = _split_and_merge(idx[:max_i+1].tolist(), points, depth+1)
+        right = _split_and_merge(idx[max_i:].tolist(),   points, depth+1)
+        return left + right
+    else:
+        return [idx] if len(idx) >= MIN_SEGMENT_PTS else []
+
+
+def _detect_walls_and_phantoms(sx, sy):
+    """
+    Utama: terima titik inlier (sx, sy list/array), kembalikan:
+      - wall_seg_data : list of (x1,y1,x2,y2) garis nominal wall
+      - inlier_mask   : boolean array — True jika bukan phantom
+      - phantom_mask  : boolean array — True jika phantom
+    """
+    n = len(sx)
+    if n < MIN_SEGMENT_PTS * 2:
+        return [], np.ones(n, bool), np.zeros(n, bool)
+
+    sx_np = np.array(sx, dtype=float)
+    sy_np = np.array(sy, dtype=float)
+    pts   = np.column_stack([sx_np, sy_np])
+
+    # 1. Urutkan berdasarkan sudut polar
+    angles = np.arctan2(sy_np, sx_np)
+    order  = np.argsort(angles)
+    pts_sorted = pts[order]
+
+    # 2. Split-and-Merge
+    segments = _split_and_merge(list(range(len(pts_sorted))), pts_sorted)
+
+    # 3. RANSAC per segmen
+    wall_lines    = []   # (a, b, c)
+    wall_seg_data = []   # (x1, y1, x2, y2)
+    for seg_idx in segments:
+        seg_pts = pts_sorted[seg_idx]
+        if len(seg_pts) < 2:
+            continue
+        line, _ = _ransac_line(seg_pts)
+        if line is None:
+            continue
+        wall_lines.append(line)
+        wall_seg_data.append((seg_pts[0, 0], seg_pts[0, 1],
+                              seg_pts[-1, 0], seg_pts[-1, 1]))
+
+    # 4. Phantom detection
+    is_phantom = np.ones(n, bool)
+    for gi in range(n):
+        px, py = sx_np[gi], sy_np[gi]
+        for a, b, c in wall_lines:
+            if abs(a*px + b*py + c) <= PHANTOM_DIST_THR:
+                is_phantom[gi] = False
+                break
+
+    return wall_seg_data, ~is_phantom, is_phantom
 
 class Visualisasi2D:
     def __init__(self):
@@ -60,29 +215,30 @@ class Visualisasi2D:
         self.fig, self.ax = plt.subplots(figsize=(9, 9), facecolor='white')
         self.ax.set_facecolor('white')
 
-        # Scatter titik dari stable_map (biru gelap)
-        self.scatter, = self.ax.plot([], [], 'o',
+        # Scatter titik inlier (biru) — dekat dinding
+        self.scatter_inlier, = self.ax.plot([], [], 'o',
             color='#1a6fb5', markersize=5, alpha=0.85,
-            label='Titik Peta (EMA Stabil)', zorder=4)
+            label='Titik Dinding (Inlier)', zorder=4)
+
+        # Scatter titik phantom (oranye) — jauh dari garis dinding
+        self.scatter_phantom, = self.ax.plot([], [], 'o',
+            color='#f57c00', markersize=5, alpha=0.85,
+            label='Phantom Point', zorder=4)
 
         # Titik mentah (kecil, transparan) – referensi sensor
         self.boundary, = self.ax.plot([], [], 'o',
             color='#aaaaaa', markersize=2, alpha=0.4,
             label='Titik Sensor (Raw)', zorder=2)
 
-        # Persegi panjang hasil fitting PCA (batas ruangan sesungguhnya)
-        self.rect_line, = self.ax.plot([], [], '-',
-            color='#cc2222', linewidth=2.2, alpha=0.9,
-            label='Batas Ruangan (Fit)', zorder=5)
-
-        # Indikator arah scanner
-        self.dir_line, = self.ax.plot([], [], '-',
-            color='#e03030', linewidth=2.5, alpha=0.9,
-            label='Arah Scanner', zorder=6)
+        # Garis nominal wall (merah) — LineCollection agar bisa diupdate
+        self.wall_collection = mc.LineCollection(
+            [], colors='#cc2222', linewidths=2.2, alpha=0.9,
+            label='Nominal Wall (RANSAC)', zorder=5)
+        self.ax.add_collection(self.wall_collection)
         self.ax.plot(0, 0, 'k+', ms=12, mew=2.5, zorder=7)
 
         # Batas tampilan & dekorasi
-        R = MAX_DIST
+        R = 100
         self.ax.set_xlim(-R, R)
         self.ax.set_ylim(-R, R)
         self.ax.set_aspect('equal')
@@ -98,16 +254,22 @@ class Visualisasi2D:
         self.title_obj = self.ax.set_title(
             'Pemetaan 2D — Menunggu data ESP32...',
             color='#111111', fontsize=13, fontweight='bold', pad=12)
+
+        # Info phantom di pojok kiri bawah
+        self.phantom_text = self.ax.text(
+            -98, -96, '', fontsize=8, color='#f57c00',
+            ha='left', va='bottom', zorder=8)
+
         self.ax.legend(loc='upper right', facecolor='white',
                        labelcolor='#111111', fontsize=8, framealpha=0.9,
                        edgecolor='#cccccc')
 
         # Lingkaran referensi jarak
-        for r in [50, 100, 150, 200]:
+        for r in [25, 50, 75, 100]:
             c = plt.Circle((0,0), r, fill=False, color='#aaaaaa',
                            lw=0.6, alpha=0.5)
             self.ax.add_patch(c)
-            self.ax.text(r+2, 3, f'{r}cm', color='#888888',
+            self.ax.text(r+1, 2, f'{r}cm', color='#888888',
                         fontsize=7, alpha=0.8)
 
         # Garis arah mata angin (tipis)
@@ -233,9 +395,9 @@ class Visualisasi2D:
         return corners[:, 0].tolist(), corners[:, 1].tolist()
 
     def _build_from_map(self):
-        """Bangun scatter (titik terfilter) dan rectangle fitting dari stable_map"""
-        sx, sy   = [], []   # Titik scatter yang sudah difilter (count >= MIN_COUNT)
-        raw_x, raw_y = [], []  # Semua titik mentah (untuk referensi)
+        """Bangun daftar titik terfilter dari stable_map."""
+        sx, sy       = [], []
+        raw_x, raw_y = [], []
 
         for i in range(360):
             d = self.stable_map[i]
@@ -245,43 +407,58 @@ class Visualisasi2D:
                 y = d * np.sin(rad)
                 raw_x.append(x)
                 raw_y.append(y)
-                # Hanya masukkan ke scatter utama jika cukup terukur
                 if self.count_map[i] >= MIN_COUNT:
                     sx.append(x)
                     sy.append(y)
 
-        # Fit rectangle ke titik yang sudah terfilter
-        rx, ry = self._fit_rectangle(sx, sy) if len(sx) >= 12 else ([], [])
-
-        return sx, sy, raw_x, raw_y, rx, ry
+        return sx, sy, raw_x, raw_y
 
     def _update_plot(self, frame):
         filled   = int(np.count_nonzero(self.stable_map))
         filtered = int(np.sum(self.count_map >= MIN_COUNT))
 
-        # Indikator arah scanner
-        a = np.radians((-self.current_yaw) % 360)
-        self.dir_line.set_data(
-            [0, 15 * np.cos(a)],
-            [0, 15 * np.sin(a)])
-
-        # Update title
         self.title_obj.set_text(
             f'Pemetaan 2D (IMU Yaw)  |  '
             f'{filtered}/{filled} sudut stabil  |  '
-            f'Yaw: {self.current_yaw:.1f}°  |  '
+            f'Yaw: {self.current_yaw:.1f}\u00b0  |  '
             f'Paket: {self.paket_count}')
 
         if filled == 0:
-            return self.scatter, self.boundary, self.rect_line, self.dir_line, self.title_obj
+            return
 
-        # Bangun dari stable_map
-        sx, sy, raw_x, raw_y, rx, ry = self._build_from_map()
-        self.scatter.set_data(sx, sy)          # Titik biru terfilter
-        self.boundary.set_data(raw_x, raw_y)   # Titik abu mentah
-        self.rect_line.set_data(rx, ry)        # Rectangle PCA fitting
+        sx, sy, raw_x, raw_y = self._build_from_map()
+        self.boundary.set_data(raw_x, raw_y)
 
-        return self.scatter, self.boundary, self.rect_line, self.dir_line, self.title_obj
+        if len(sx) < MIN_SEGMENT_PTS * 2:
+            # Belum cukup titik untuk wall fitting
+            self.scatter_inlier.set_data(sx, sy)
+            self.scatter_phantom.set_data([], [])
+            self.wall_collection.set_segments([])
+            self.phantom_text.set_text('')
+        else:
+            sx_np = np.array(sx, dtype=float)
+            sy_np = np.array(sy, dtype=float)
+
+            wall_segs, inlier_mask, phantom_mask = \
+                _detect_walls_and_phantoms(sx_np.tolist(), sy_np.tolist())
+
+            # Titik inlier (biru)
+            self.scatter_inlier.set_data(sx_np[inlier_mask],
+                                         sy_np[inlier_mask])
+            # Titik phantom (oranye)
+            self.scatter_phantom.set_data(sx_np[phantom_mask],
+                                          sy_np[phantom_mask])
+            # Garis nominal wall (merah)
+            self.wall_collection.set_segments(
+                [[(x1, y1), (x2, y2)] for x1, y1, x2, y2 in wall_segs])
+
+            # Info teks
+            n_ph  = int(phantom_mask.sum())
+            n_tot = len(sx)
+            pct   = 100 * n_ph / n_tot if n_tot > 0 else 0
+            self.phantom_text.set_text(
+                f'Phantom: {n_ph}/{n_tot} titik ({pct:.1f}%)  '
+                f'| Wall: {len(wall_segs)} segmen')
 
     def save_data(self):
         if not self.record_log:
@@ -309,7 +486,7 @@ class Visualisasi2D:
     def start(self):
         self.anim = FuncAnimation(
             self.fig, self._update_plot,
-            interval=150, blit=True, cache_frame_data=False)
+            interval=200, blit=False, cache_frame_data=False)
         plt.tight_layout()
         plt.show()
 
