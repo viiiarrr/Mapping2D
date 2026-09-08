@@ -17,6 +17,10 @@ let playTimer  = null;
 let currentFrame = 0;
 let speedMultiplier = 1;
 
+let ws = null;
+let isLiveMode = false;
+let lastRenderTime = 0;
+
 /* ============================================================
    INIT
    ============================================================ */
@@ -28,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initParamPanel();
   initExportBtn();
   initPlot();
+  initWebSocket();
 });
 
 /* ============================================================
@@ -560,3 +565,94 @@ function setStatus(type, text) {
 window.addEventListener('resize', () => {
   if (plotInitialized) Plotly.Plots.resize('plot');
 });
+
+/* ============================================================
+   WEBSOCKET (LIVE MODE)
+   ============================================================ */
+function initWebSocket() {
+  ws = new WebSocket('ws://localhost:8765');
+  
+  ws.onopen = () => {
+    isLiveMode = true;
+    console.log('[+] WebSocket terhubung: LIVE MODE');
+    setStatus('processing', 'Live Mode: Menunggu data...');
+    showPlot();
+    
+    // Nonaktifkan input manual
+    el('exp-select').disabled = true;
+    el('file-input').disabled = true;
+    el('drop-zone').style.opacity = '0.5';
+    el('drop-zone').style.pointerEvents = 'none';
+    
+    // Sembunyikan replay bar di awal
+    el('replay-bar').style.display = 'none';
+    
+    proc.reset();
+    proc.rows = [];
+    proc.snapshots = [];
+    proc.snapshots.push(proc._takeSnapshot(-1));
+  };
+  
+  ws.onmessage = (e) => {
+    if (!isLiveMode) return;
+    
+    // Parse data dari ESP32 (yaw, d1, d2, ..., d8) -> 9 kolom
+    // Jika di masa depan server menyisipkan waktu, formatnya jadi 10 kolom
+    const cols = e.data.split(',');
+    let timeStr, yaw, dists;
+    
+    if (cols.length === 9) {
+      // Format asli ESP32
+      timeStr = new Date().toISOString().slice(11, 23); // HH:mm:ss.SSS lokal
+      yaw = parseFloat(cols[0]);
+      dists = cols.slice(1, 9).map(Number);
+    } else if (cols.length >= 10) {
+      // Format file CSV
+      timeStr = cols[0].trim();
+      yaw = parseFloat(cols[1]);
+      dists = cols.slice(2, 10).map(Number);
+    } else {
+      return;
+    }
+    
+    if (isNaN(yaw)) return;
+    
+    const row = { time: timeStr, yaw, distances: dists };
+    proc.rows.push(row);
+    proc.processRow(row);
+    currentFrame = proc.rows.length - 1;
+    
+    // Simpan snapshot untuk replay
+    if ((currentFrame + 1) % proc.p.snapshot_interval === 0) {
+      proc.snapshots.push(proc._takeSnapshot(currentFrame));
+    }
+    
+    // Batasi update Plotly maks 15 FPS supaya browser tidak lag (±66ms)
+    const now = performance.now();
+    if (now - lastRenderTime > 66) {
+      renderCurrentState();
+      updateStats();
+      lastRenderTime = now;
+      setStatus('processing', `Live: ${currentFrame + 1} paket`);
+    }
+  };
+  
+  ws.onerror = () => {
+    // Jika gagal, berarti mode statis (dari GitHub Pages atau tanpa server.py)
+    isLiveMode = false;
+  };
+  
+  ws.onclose = () => {
+    if (isLiveMode) {
+      setStatus('', 'Koneksi Live terputus. Beralih ke offline.');
+      isLiveMode = false;
+      
+      // Aktifkan replay bar dengan data yang sudah terkumpul
+      const slider = el('replay-slider');
+      slider.max = proc.rows.length - 1;
+      slider.value = currentFrame;
+      el('replay-bar').style.display = 'flex';
+      updateReplayTime();
+    }
+  };
+}
