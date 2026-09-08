@@ -4,3 +4,7 @@
 Data/
 __pycache__/
 *.pyc
+
+# Boleh commit (dibutuhkan GitHub Pages)
+!web-visualisasi/data/
+!web-visualisasi/data/**

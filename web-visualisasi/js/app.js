@@ -1,0 +1,560 @@
+/**
+ * app.js — Main application logic
+ * Mengelola: UI, loading CSV, rendering Plotly, replay mode
+ */
+
+/* ============================================================
+   KONSTANTA & STATE GLOBAL
+   ============================================================ */
+const DATA_BASE = '../Data/';   // Relatif ke web-visualisasi/
+
+const proc = new SensorProcessor();
+
+let layers = { inlier: true, phantom: true, raw: true, wall: true };
+let plotInitialized = false;
+let isPlaying = false;
+let playTimer  = null;
+let currentFrame = 0;
+let speedMultiplier = 1;
+
+/* ============================================================
+   INIT
+   ============================================================ */
+document.addEventListener('DOMContentLoaded', () => {
+  loadManifest();
+  initDropZone();
+  initLayerToggles();
+  initReplayBar();
+  initParamPanel();
+  initExportBtn();
+  initPlot();
+});
+
+/* ============================================================
+   MANIFEST — daftar semua percobaan
+   ============================================================ */
+async function loadManifest() {
+  try {
+    const resp = await fetch('data/manifest.json');
+    if (!resp.ok) throw new Error('manifest not found');
+    const { experiments } = await resp.json();
+    const sel = document.getElementById('exp-select');
+    experiments.forEach(exp => {
+      const opt = document.createElement('option');
+      opt.value = exp.file;
+      opt.textContent = exp.name;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', () => {
+      if (sel.value) loadCSVFromURL('data/' + sel.value);
+    });
+  } catch (e) {
+    // Tidak ada manifest (misal: buka file:// lokal) — hanya drag & drop
+    const sel = document.getElementById('exp-select');
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '(Upload CSV manual)';
+    opt.disabled = true;
+    sel.appendChild(opt);
+    sel.disabled = true;
+    console.log('[i] Manifest tidak tersedia. Gunakan drag & drop.');
+  }
+}
+
+/* ============================================================
+   LOAD CSV — dari URL atau dari File object
+   ============================================================ */
+async function loadCSVFromURL(url) {
+  setStatus('processing', `Memuat ${url}…`);
+  showLoading();
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const text = await resp.text();
+    processCSVText(text, url.split('/').pop());
+  } catch (e) {
+    setStatus('', `Gagal memuat: ${e.message}`);
+    showEmpty();
+  }
+}
+
+function loadCSVFromFile(file) {
+  setStatus('processing', `Memuat ${file.name}…`);
+  showLoading();
+  const reader = new FileReader();
+  reader.onload = e => processCSVText(e.target.result, file.name);
+  reader.onerror = () => { setStatus('', 'Gagal membaca file.'); showEmpty(); };
+  reader.readAsText(file);
+}
+
+function processCSVText(text, filename) {
+  // Proses di "background" agar UI tidak freeze (gunakan setTimeout)
+  setTimeout(() => {
+    try {
+      proc.loadCSV(text);
+      const stats = proc.getStats();
+
+      // Info file
+      const info = document.getElementById('loaded-file-info');
+      info.style.display = 'block';
+      info.textContent = `✓ ${filename}  |  ${proc.rows.length} paket  |  ${stats.filled}/360 sudut`;
+
+      // Setup replay slider
+      const slider = document.getElementById('replay-slider');
+      slider.max   = proc.rows.length - 1;
+      slider.value = proc.rows.length - 1;
+      currentFrame = proc.rows.length - 1;
+      document.getElementById('replay-bar').style.display = 'flex';
+
+      // Render full state
+      renderCurrentState();
+      updateStats();
+      updateReplayTime();
+      setStatus('loaded', `${filename} — ${proc.rows.length} paket`);
+      document.getElementById('btn-export').disabled = false;
+      document.getElementById('btn-reprocess').disabled = false;
+
+    } catch(e) {
+      console.error(e);
+      setStatus('', `Error proses CSV: ${e.message}`);
+      showEmpty();
+    }
+  }, 20);
+}
+
+/* ============================================================
+   PLOTLY — inisialisasi & update
+   ============================================================ */
+
+const PLOTLY_CONFIG = {
+  displaylogo: false,
+  modeBarButtonsToRemove: ['select2d','lasso2d','autoScale2d'],
+  scrollZoom: true,
+  responsive: true,
+};
+
+const PLOT_LAYOUT = {
+  paper_bgcolor: 'transparent',
+  plot_bgcolor:  'rgba(10, 10, 22, 0.85)',
+  font: { family: 'Inter, sans-serif', color: '#94a3b8' },
+  margin: { t: 40, b: 50, l: 55, r: 20 },
+  xaxis: {
+    title: { text: 'X (cm)', font: { size: 12 } },
+    range: [-110, 110],
+    zeroline: true, zerolinecolor: 'rgba(255,255,255,0.15)', zerolinewidth: 1,
+    gridcolor: 'rgba(255,255,255,0.05)', gridwidth: 1,
+    tickcolor: 'rgba(255,255,255,0.1)', tickfont: { size: 11 },
+    scaleanchor: 'y',
+  },
+  yaxis: {
+    title: { text: 'Y (cm)', font: { size: 12 } },
+    range: [-110, 110],
+    zeroline: true, zerolinecolor: 'rgba(255,255,255,0.15)', zerolinewidth: 1,
+    gridcolor: 'rgba(255,255,255,0.05)', gridwidth: 1,
+    tickcolor: 'rgba(255,255,255,0.1)', tickfont: { size: 11 },
+  },
+  legend: {
+    x: 1, xanchor: 'right', y: 1, yanchor: 'top',
+    bgcolor:     'rgba(13,13,26,0.88)',
+    bordercolor: 'rgba(255,255,255,0.08)',
+    borderwidth: 1,
+    font: { size: 11, color: '#cbd5e1' },
+  },
+  title: {
+    text: 'Pemetaan 2D (IMU Yaw) — Menunggu data…',
+    font: { size: 13, color: '#e2e8f0', weight: 600 },
+    x: 0.5,
+  },
+  shapes: buildCircleShapes(),
+  annotations: buildCircleLabels(),
+  hovermode: 'closest',
+  dragmode: 'pan',
+};
+
+function buildCircleShapes() {
+  return [25, 50, 75, 100].map(r => ({
+    type: 'circle', xref: 'x', yref: 'y',
+    x0: -r, y0: -r, x1: r, y1: r,
+    line: { color: 'rgba(150,160,180,0.18)', width: 1 },
+    layer: 'below',
+  }));
+}
+
+function buildCircleLabels() {
+  return [25, 50, 75, 100].map(r => ({
+    x: r + 1, y: 3, text: `${r}cm`,
+    showarrow: false,
+    font: { size: 9, color: 'rgba(150,160,180,0.45)' },
+    xanchor: 'left',
+  }));
+}
+
+function initPlot() {
+  const traces = buildEmptyTraces();
+  Plotly.newPlot('plot', traces, PLOT_LAYOUT, PLOTLY_CONFIG);
+  plotInitialized = true;
+
+  // Sembunyikan container plot sampai ada data
+  document.getElementById('plot-container').style.display = 'none';
+}
+
+function buildEmptyTraces() {
+  return [
+    // 0: Raw sensor
+    { name: 'Sensor Raw', type: 'scatter', mode: 'markers', x: [], y: [],
+      marker: { color: '#475569', size: 3, opacity: 0.5 },
+      hovertemplate: 'Raw: (%{x:.1f}, %{y:.1f}) cm<extra></extra>' },
+    // 1: Wall lines (null-separated)
+    { name: 'Nominal Wall (RANSAC)', type: 'scatter', mode: 'lines', x: [], y: [],
+      line: { color: '#ef4444', width: 2.2 },
+      hoverinfo: 'skip' },
+    // 2: Inlier (titik dinding)
+    { name: 'Titik Dinding (Inlier)', type: 'scatter', mode: 'markers', x: [], y: [],
+      marker: { color: '#3b82f6', size: 6, opacity: 0.9 },
+      hovertemplate: 'Inlier: (%{x:.1f}, %{y:.1f}) cm<extra></extra>' },
+    // 3: Phantom
+    { name: 'Phantom Point', type: 'scatter', mode: 'markers', x: [], y: [],
+      marker: { color: '#f97316', size: 7, opacity: 0.95, symbol: 'circle' },
+      hovertemplate: 'Phantom: (%{x:.1f}, %{y:.1f}) cm<extra></extra>' },
+    // 4: Pusat sensor
+    { name: 'Posisi Sensor', type: 'scatter', mode: 'markers', x: [0], y: [0],
+      marker: { color: '#e2e8f0', size: 10, symbol: 'cross', line: { width: 2 } },
+      hoverinfo: 'skip', showlegend: false },
+  ];
+}
+
+function renderCurrentState() {
+  if (!plotInitialized) return;
+
+  const { sx, sy, rawX, rawY } = proc.getMapPoints();
+  const stats = proc.getStats();
+
+  let wallX = [], wallY = [];
+  let inlierX = sx, inlierY = sy;
+  let phantomX = [], phantomY = [];
+  let wallSegCount = 0;
+  let phantomCount = 0;
+
+  if (sx.length >= proc.p.min_segment_pts * 2) {
+    const { wallSegs, inlierMask, phantomMask } = proc.detectWalls(sx, sy);
+    wallSegCount = wallSegs.length;
+    phantomCount = phantomMask.filter(Boolean).length;
+
+    inlierX  = sx.filter((_, i) => inlierMask[i]);
+    inlierY  = sy.filter((_, i) => inlierMask[i]);
+    phantomX = sx.filter((_, i) => phantomMask[i]);
+    phantomY = sy.filter((_, i) => phantomMask[i]);
+
+    // Null-separated segments untuk Plotly
+    for (const [x1, y1, x2, y2] of wallSegs) {
+      wallX.push(x1, x2, null);
+      wallY.push(y1, y2, null);
+    }
+  }
+
+  const pct = sx.length > 0 ? (100 * phantomCount / sx.length).toFixed(1) : '0.0';
+
+  // Update traces
+  Plotly.update('plot',
+    {
+      x: [
+        layers.raw     ? rawX    : [],
+        layers.wall    ? wallX   : [],
+        layers.inlier  ? inlierX : [],
+        layers.phantom ? phantomX: [],
+        [0],
+      ],
+      y: [
+        layers.raw     ? rawY    : [],
+        layers.wall    ? wallY   : [],
+        layers.inlier  ? inlierY : [],
+        layers.phantom ? phantomY: [],
+        [0],
+      ],
+      visible: [
+        layers.raw, layers.wall, layers.inlier, layers.phantom, true,
+      ],
+    },
+    {
+      title: {
+        text: `Pemetaan 2D (IMU Yaw)  |  ${stats.stable}/${stats.filled} sudut stabil  |  ` +
+              `Yaw: ${stats.yaw.toFixed(1)}°  |  Paket: ${stats.packets}`,
+        font: { size: 13, color: '#e2e8f0' },
+        x: 0.5,
+      },
+    }
+  );
+
+  // Update stats panel
+  el('stat-packets').textContent = stats.packets.toLocaleString();
+  el('stat-stable').textContent  = `${stats.stable}/${stats.filled}`;
+  el('stat-yaw').textContent     = `${stats.yaw.toFixed(1)}°`;
+  el('stat-phantom').textContent = `${phantomCount} (${pct}%)`;
+  el('stat-walls').textContent   = wallSegCount;
+
+  showPlot();
+}
+
+function updateStats() { /* Stats already updated in renderCurrentState */ }
+
+/* ============================================================
+   LAYER TOGGLES
+   ============================================================ */
+function initLayerToggles() {
+  const map = {
+    'chk-inlier':  'inlier',
+    'chk-phantom': 'phantom',
+    'chk-raw':     'raw',
+    'chk-wall':    'wall',
+  };
+  for (const [id, key] of Object.entries(map)) {
+    document.getElementById(id).addEventListener('change', e => {
+      layers[key] = e.target.checked;
+      if (plotInitialized) renderCurrentState();
+    });
+  }
+}
+
+/* ============================================================
+   REPLAY BAR
+   ============================================================ */
+function initReplayBar() {
+  const slider   = document.getElementById('replay-slider');
+  const btnPlay  = document.getElementById('btn-play');
+  const btnReset = document.getElementById('btn-reset-replay');
+  const speedSel = document.getElementById('speed-select');
+  const playIcon = document.getElementById('play-icon');
+  const pauseIcon= document.getElementById('pause-icon');
+
+  slider.addEventListener('input', () => {
+    stopPlay();
+    currentFrame = parseInt(slider.value);
+    proc.seekTo(currentFrame);
+    renderCurrentState();
+    updateReplayTime();
+    updateSliderStyle();
+  });
+
+  btnPlay.addEventListener('click', () => {
+    if (isPlaying) stopPlay();
+    else startPlay();
+  });
+
+  btnReset.addEventListener('click', () => {
+    stopPlay();
+    slider.value = proc.rows.length - 1;
+    currentFrame = proc.rows.length - 1;
+    proc.seekTo(currentFrame);
+    renderCurrentState();
+    updateReplayTime();
+    updateSliderStyle();
+  });
+
+  speedSel.addEventListener('change', () => {
+    speedMultiplier = parseFloat(speedSel.value);
+    if (isPlaying) { stopPlay(); startPlay(); }
+  });
+
+  function startPlay() {
+    isPlaying = true;
+    btnPlay.classList.add('active');
+    playIcon.style.display = 'none';
+    pauseIcon.style.display = '';
+
+    if (currentFrame >= proc.rows.length - 1) {
+      currentFrame = 0;
+      slider.value = 0;
+      proc.seekTo(0);
+    }
+
+    const baseInterval = 80; // ms per frame
+    const ms = Math.max(10, baseInterval / speedMultiplier);
+
+    playTimer = setInterval(() => {
+      currentFrame++;
+      if (currentFrame >= proc.rows.length) {
+        stopPlay();
+        currentFrame = proc.rows.length - 1;
+      }
+      slider.value = currentFrame;
+      proc.seekTo(currentFrame);
+      renderCurrentState();
+      updateReplayTime();
+      updateSliderStyle();
+    }, ms);
+  }
+
+  function stopPlay() {
+    isPlaying = false;
+    clearInterval(playTimer);
+    btnPlay.classList.remove('active');
+    playIcon.style.display = '';
+    pauseIcon.style.display = 'none';
+  }
+
+  window.stopPlay = stopPlay;
+}
+
+function updateReplayTime() {
+  const el_time = document.getElementById('replay-time');
+  if (!proc.rows.length) { el_time.textContent = '—'; return; }
+  const row = proc.rows[Math.min(currentFrame, proc.rows.length - 1)];
+  const last = proc.rows[proc.rows.length - 1];
+  el_time.textContent = `${row.time} / ${last.time}`;
+}
+
+function updateSliderStyle() {
+  const slider = document.getElementById('replay-slider');
+  const pct = (slider.value / slider.max * 100).toFixed(1);
+  slider.style.background =
+    `linear-gradient(to right, #6366f1 ${pct}%, rgba(255,255,255,0.1) ${pct}%)`;
+}
+
+/* ============================================================
+   PARAMETER PANEL
+   ============================================================ */
+function initParamPanel() {
+  const toggle = document.getElementById('params-toggle');
+  const body   = document.getElementById('params-body');
+  toggle.addEventListener('click', () => {
+    body.classList.toggle('collapsed');
+    toggle.classList.toggle('open');
+  });
+
+  // Sliders
+  const sliders = [
+    { id: 'prm-ema',  valId: 'val-ema', key: 'ema_alpha',       fmt: v => v.toFixed(2) },
+    { id: 'prm-rit',  valId: 'val-rit', key: 'ransac_inlier_thr', fmt: v => v.toFixed(0) },
+    { id: 'prm-pht',  valId: 'val-pht', key: 'phantom_dist_thr',  fmt: v => v.toFixed(0) },
+    { id: 'prm-spt',  valId: 'val-spt', key: 'split_threshold',   fmt: v => v.toFixed(0) },
+    { id: 'prm-msp',  valId: 'val-msp', key: 'min_segment_pts',   fmt: v => v.toFixed(0) },
+  ];
+
+  sliders.forEach(({ id, valId, key, fmt }) => {
+    const input = document.getElementById(id);
+    const span  = document.getElementById(valId);
+    input.addEventListener('input', () => {
+      span.textContent = fmt(parseFloat(input.value));
+      updateSliderTrack(input);
+    });
+    updateSliderTrack(input);
+  });
+
+  document.getElementById('btn-reprocess').addEventListener('click', () => {
+    // Kumpulkan parameter baru dari slider
+    const newParams = {
+      ema_alpha:        parseFloat(document.getElementById('prm-ema').value),
+      ransac_inlier_thr: parseFloat(document.getElementById('prm-rit').value),
+      phantom_dist_thr:  parseFloat(document.getElementById('prm-pht').value),
+      split_threshold:   parseFloat(document.getElementById('prm-spt').value),
+      min_segment_pts:   parseInt(document.getElementById('prm-msp').value),
+    };
+    Object.assign(proc.p, newParams);
+
+    // Re-proses dengan parameter baru
+    setStatus('processing', 'Memproses ulang…');
+    showLoading();
+    setTimeout(() => {
+      const savedRows = proc.rows.slice();
+      proc.loadCSV(savedRows.map(r =>
+        `${r.time},${r.yaw},${r.distances.join(',')}`
+      ).join('\n'));
+      // Re-assign rows (loadCSV re-parses teks, tapi kita inject langsung)
+      proc.rows = savedRows;
+
+      // Rebuild snapshots
+      proc.snapshots = [];
+      proc.reset();
+      const N = proc.rows.length;
+      proc.snapshots.push(proc._takeSnapshot(-1));
+      for (let i = 0; i < N; i++) {
+        proc.processRow(proc.rows[i]);
+        if ((i + 1) % proc.p.snapshot_interval === 0 || i === N - 1)
+          proc.snapshots.push(proc._takeSnapshot(i));
+      }
+
+      const slider = document.getElementById('replay-slider');
+      currentFrame = parseInt(slider.value);
+      proc.seekTo(currentFrame);
+      renderCurrentState();
+      setStatus('loaded', 'Proses ulang selesai.');
+    }, 20);
+  });
+}
+
+function updateSliderTrack(input) {
+  const min = parseFloat(input.min), max = parseFloat(input.max), val = parseFloat(input.value);
+  const pct = ((val - min) / (max - min) * 100).toFixed(1);
+  input.style.background =
+    `linear-gradient(to right, #6366f1 ${pct}%, rgba(255,255,255,0.1) ${pct}%)`;
+}
+
+/* ============================================================
+   DRAG & DROP
+   ============================================================ */
+function initDropZone() {
+  const zone   = document.getElementById('drop-zone');
+  const input  = document.getElementById('file-input');
+
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file && file.name.endsWith('.csv')) loadCSVFromFile(file);
+  });
+
+  input.addEventListener('change', () => {
+    if (input.files[0]) loadCSVFromFile(input.files[0]);
+  });
+}
+
+/* ============================================================
+   EXPORT PNG
+   ============================================================ */
+function initExportBtn() {
+  document.getElementById('btn-export').addEventListener('click', () => {
+    Plotly.downloadImage('plot', {
+      format: 'png', width: 1200, height: 1000,
+      filename: `peta_2d_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}`,
+    });
+  });
+}
+
+/* ============================================================
+   UI HELPERS
+   ============================================================ */
+function el(id) { return document.getElementById(id); }
+
+function showEmpty() {
+  el('empty-state').style.display   = '';
+  el('loading-state').style.display = 'none';
+  el('plot-container').style.display= 'none';
+}
+
+function showLoading() {
+  el('empty-state').style.display   = 'none';
+  el('loading-state').style.display = '';
+  el('plot-container').style.display= 'none';
+}
+
+function showPlot() {
+  el('empty-state').style.display   = 'none';
+  el('loading-state').style.display = 'none';
+  el('plot-container').style.display= '';
+  // Trigger resize agar Plotly menyesuaikan ukuran
+  window.dispatchEvent(new Event('resize'));
+}
+
+function setStatus(type, text) {
+  const dot  = el('status-dot');
+  const span = el('status-text');
+  dot.className  = 'status-dot' + (type ? ' ' + type : '');
+  span.textContent = text;
+}
+
+// Resize Plotly saat window resize
+window.addEventListener('resize', () => {
+  if (plotInitialized) Plotly.Plots.resize('plot');
+});

@@ -1,0 +1,256 @@
+{
+  "experiments": [
+    {
+      "id": 42,
+      "name": "Percobaan 42",
+      "file": "percobaan_42/koordinat.csv",
+      "rows": 1228
+    },
+    {
+      "id": 41,
+      "name": "Percobaan 41",
+      "file": "percobaan_41/koordinat.csv",
+      "rows": 660
+    },
+    {
+      "id": 40,
+      "name": "Percobaan 40",
+      "file": "percobaan_40/koordinat.csv",
+      "rows": 560
+    },
+    {
+      "id": 39,
+      "name": "Percobaan 39",
+      "file": "percobaan_39/koordinat.csv",
+      "rows": 309
+    },
+    {
+      "id": 38,
+      "name": "Percobaan 38",
+      "file": "percobaan_38/koordinat.csv",
+      "rows": 346
+    },
+    {
+      "id": 37,
+      "name": "Percobaan 37",
+      "file": "percobaan_37/koordinat.csv",
+      "rows": 360
+    },
+    {
+      "id": 36,
+      "name": "Percobaan 36",
+      "file": "percobaan_36/koordinat.csv",
+      "rows": 237
+    },
+    {
+      "id": 35,
+      "name": "Percobaan 35",
+      "file": "percobaan_35/koordinat.csv",
+      "rows": 359
+    },
+    {
+      "id": 34,
+      "name": "Percobaan 34",
+      "file": "percobaan_34/koordinat.csv",
+      "rows": 413
+    },
+    {
+      "id": 33,
+      "name": "Percobaan 33",
+      "file": "percobaan_33/koordinat.csv",
+      "rows": 207
+    },
+    {
+      "id": 32,
+      "name": "Percobaan 32",
+      "file": "percobaan_32/koordinat.csv",
+      "rows": 192
+    },
+    {
+      "id": 31,
+      "name": "Percobaan 31",
+      "file": "percobaan_31/koordinat.csv",
+      "rows": 147
+    },
+    {
+      "id": 30,
+      "name": "Percobaan 30",
+      "file": "percobaan_30/koordinat.csv",
+      "rows": 292
+    },
+    {
+      "id": 29,
+      "name": "Percobaan 29",
+      "file": "percobaan_29/koordinat.csv",
+      "rows": 400
+    },
+    {
+      "id": 28,
+      "name": "Percobaan 28",
+      "file": "percobaan_28/koordinat.csv",
+      "rows": 292
+    },
+    {
+      "id": 27,
+      "name": "Percobaan 27",
+      "file": "percobaan_27/koordinat.csv",
+      "rows": 313
+    },
+    {
+      "id": 26,
+      "name": "Percobaan 26",
+      "file": "percobaan_26/koordinat.csv",
+      "rows": 633
+    },
+    {
+      "id": 25,
+      "name": "Percobaan 25",
+      "file": "percobaan_25/koordinat.csv",
+      "rows": 154
+    },
+    {
+      "id": 24,
+      "name": "Percobaan 24",
+      "file": "percobaan_24/koordinat.csv",
+      "rows": 212
+    },
+    {
+      "id": 23,
+      "name": "Percobaan 23",
+      "file": "percobaan_23/koordinat.csv",
+      "rows": 195
+    },
+    {
+      "id": 22,
+      "name": "Percobaan 22",
+      "file": "percobaan_22/koordinat.csv",
+      "rows": 157
+    },
+    {
+      "id": 21,
+      "name": "Percobaan 21",
+      "file": "percobaan_21/koordinat.csv",
+      "rows": 921
+    },
+    {
+      "id": 20,
+      "name": "Percobaan 20",
+      "file": "percobaan_20/koordinat.csv",
+      "rows": 206
+    },
+    {
+      "id": 19,
+      "name": "Percobaan 19",
+      "file": "percobaan_19/koordinat.csv",
+      "rows": 494
+    },
+    {
+      "id": 18,
+      "name": "Percobaan 18",
+      "file": "percobaan_18/koordinat.csv",
+      "rows": 413
+    },
+    {
+      "id": 17,
+      "name": "Percobaan 17",
+      "file": "percobaan_17/koordinat.csv",
+      "rows": 196
+    },
+    {
+      "id": 16,
+      "name": "Percobaan 16",
+      "file": "percobaan_16/koordinat.csv",
+      "rows": 162
+    },
+    {
+      "id": 15,
+      "name": "Percobaan 15",
+      "file": "percobaan_15/koordinat.csv",
+      "rows": 340
+    },
+    {
+      "id": 14,
+      "name": "Percobaan 14",
+      "file": "percobaan_14/koordinat.csv",
+      "rows": 22
+    },
+    {
+      "id": 13,
+      "name": "Percobaan 13",
+      "file": "percobaan_13/koordinat.csv",
+      "rows": 161
+    },
+    {
+      "id": 12,
+      "name": "Percobaan 12",
+      "file": "percobaan_12/koordinat.csv",
+      "rows": 163
+    },
+    {
+      "id": 11,
+      "name": "Percobaan 11",
+      "file": "percobaan_11/koordinat.csv",
+      "rows": 738
+    },
+    {
+      "id": 10,
+      "name": "Percobaan 10",
+      "file": "percobaan_10/koordinat.csv",
+      "rows": 161
+    },
+    {
+      "id": 9,
+      "name": "Percobaan 9",
+      "file": "percobaan_9/koordinat.csv",
+      "rows": 166
+    },
+    {
+      "id": 8,
+      "name": "Percobaan 8",
+      "file": "percobaan_8/koordinat.csv",
+      "rows": 127
+    },
+    {
+      "id": 7,
+      "name": "Percobaan 7",
+      "file": "percobaan_7/koordinat.csv",
+      "rows": 280
+    },
+    {
+      "id": 6,
+      "name": "Percobaan 6",
+      "file": "percobaan_6/koordinat.csv",
+      "rows": 379
+    },
+    {
+      "id": 5,
+      "name": "Percobaan 5",
+      "file": "percobaan_5/koordinat.csv",
+      "rows": 383
+    },
+    {
+      "id": 4,
+      "name": "Percobaan 4",
+      "file": "percobaan_4/koordinat.csv",
+      "rows": 13009
+    },
+    {
+      "id": 3,
+      "name": "Percobaan 3",
+      "file": "percobaan_3/koordinat.csv",
+      "rows": 544
+    },
+    {
+      "id": 2,
+      "name": "Percobaan 2",
+      "file": "percobaan_2/koordinat.csv",
+      "rows": 1232
+    },
+    {
+      "id": 1,
+      "name": "Percobaan 1",
+      "file": "percobaan_1/koordinat.csv",
+      "rows": 168
+    }
+  ]
+}

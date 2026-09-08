@@ -1,0 +1,47 @@
+name: Deploy Web Visualisasi ke GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:   # Bisa di-trigger manual dari GitHub
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate web data (copy CSV + manifest)
+        run: python generate_web_data.py
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact (seluruh repo)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'   # Deploy seluruh repo → Data/ dan web-visualisasi/ ikut
+
+      - name: Deploy ke GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
