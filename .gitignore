@@ -1,10 +1,14 @@
 .pio
 .vscode/
 .DS_Store
-Data/
 __pycache__/
 *.pyc
 
-# Boleh commit (dibutuhkan GitHub Pages)
-!web-visualisasi/data/
-!web-visualisasi/data/**
+# Data mentah percobaan (tidak perlu di-commit, terlalu banyak)
+Data/
+
+# File CSV hasil generate di web (di-generate ulang via python/generate_web_data.py)
+web-visualisasi/data/percobaan_*/
+
+# Tapi manifest.json tetap di-commit (daftar percobaan)
+!web-visualisasi/data/manifest.json

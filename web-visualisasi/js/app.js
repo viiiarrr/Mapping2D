@@ -97,7 +97,7 @@ function processCSVText(text, filename) {
       // Info file
       const info = document.getElementById('loaded-file-info');
       info.style.display = 'block';
-      info.textContent = `✓ ${filename}  |  ${proc.rows.length} paket  |  ${stats.filled}/360 sudut`;
+      info.textContent = `${filename}  |  ${proc.rows.length} paket  |  ${stats.filled}/360 sudut`;
 
       // Setup replay slider
       const slider = document.getElementById('replay-slider');
@@ -134,35 +134,37 @@ const PLOTLY_CONFIG = {
 };
 
 const PLOT_LAYOUT = {
-  paper_bgcolor: 'transparent',
-  plot_bgcolor:  'rgba(10, 10, 22, 0.85)',
-  font: { family: 'Inter, sans-serif', color: '#94a3b8' },
-  margin: { t: 40, b: 50, l: 55, r: 20 },
+  paper_bgcolor: '#eef0f4',
+  plot_bgcolor:  '#ffffff',
+  font: { family: 'Inter, sans-serif', color: '#374151' },
+  margin: { t: 44, b: 52, l: 58, r: 20 },
   xaxis: {
-    title: { text: 'X (cm)', font: { size: 12 } },
+    title: { text: 'X (cm)', font: { size: 12, color: '#6b7280' } },
     range: [-110, 110],
-    zeroline: true, zerolinecolor: 'rgba(255,255,255,0.15)', zerolinewidth: 1,
-    gridcolor: 'rgba(255,255,255,0.05)', gridwidth: 1,
-    tickcolor: 'rgba(255,255,255,0.1)', tickfont: { size: 11 },
+    zeroline: true, zerolinecolor: 'rgba(0,0,0,0.2)', zerolinewidth: 1,
+    gridcolor: 'rgba(0,0,0,0.06)', gridwidth: 1,
+    tickcolor: 'rgba(0,0,0,0.1)', tickfont: { size: 11, color: '#6b7280' },
     scaleanchor: 'y',
+    linecolor: 'rgba(0,0,0,0.1)',
   },
   yaxis: {
-    title: { text: 'Y (cm)', font: { size: 12 } },
+    title: { text: 'Y (cm)', font: { size: 12, color: '#6b7280' } },
     range: [-110, 110],
-    zeroline: true, zerolinecolor: 'rgba(255,255,255,0.15)', zerolinewidth: 1,
-    gridcolor: 'rgba(255,255,255,0.05)', gridwidth: 1,
-    tickcolor: 'rgba(255,255,255,0.1)', tickfont: { size: 11 },
+    zeroline: true, zerolinecolor: 'rgba(0,0,0,0.2)', zerolinewidth: 1,
+    gridcolor: 'rgba(0,0,0,0.06)', gridwidth: 1,
+    tickcolor: 'rgba(0,0,0,0.1)', tickfont: { size: 11, color: '#6b7280' },
+    linecolor: 'rgba(0,0,0,0.1)',
   },
   legend: {
     x: 1, xanchor: 'right', y: 1, yanchor: 'top',
-    bgcolor:     'rgba(13,13,26,0.88)',
-    bordercolor: 'rgba(255,255,255,0.08)',
+    bgcolor:     'rgba(255,255,255,0.92)',
+    bordercolor: 'rgba(0,0,0,0.12)',
     borderwidth: 1,
-    font: { size: 11, color: '#cbd5e1' },
+    font: { size: 11, color: '#374151' },
   },
   title: {
-    text: 'Pemetaan 2D (IMU Yaw) — Menunggu data…',
-    font: { size: 13, color: '#e2e8f0', weight: 600 },
+    text: 'Pemetaan 2D (IMU Yaw) — Menunggu data...',
+    font: { size: 13, color: '#111827', weight: 600 },
     x: 0.5,
   },
   shapes: buildCircleShapes(),
@@ -175,7 +177,7 @@ function buildCircleShapes() {
   return [25, 50, 75, 100].map(r => ({
     type: 'circle', xref: 'x', yref: 'y',
     x0: -r, y0: -r, x1: r, y1: r,
-    line: { color: 'rgba(150,160,180,0.18)', width: 1 },
+    line: { color: 'rgba(0,0,0,0.12)', width: 1, dash: 'dot' },
     layer: 'below',
   }));
 }
@@ -184,7 +186,7 @@ function buildCircleLabels() {
   return [25, 50, 75, 100].map(r => ({
     x: r + 1, y: 3, text: `${r}cm`,
     showarrow: false,
-    font: { size: 9, color: 'rgba(150,160,180,0.45)' },
+    font: { size: 9, color: 'rgba(100,116,139,0.7)' },
     xanchor: 'left',
   }));
 }
@@ -201,24 +203,24 @@ function initPlot() {
 function buildEmptyTraces() {
   return [
     // 0: Raw sensor
-    { name: 'Sensor Raw', type: 'scatter', mode: 'markers', x: [], y: [],
-      marker: { color: '#475569', size: 3, opacity: 0.5 },
+    { name: 'Titik Sensor (Raw)', type: 'scatter', mode: 'markers', x: [], y: [],
+      marker: { color: '#aaaaaa', size: 3, opacity: 0.5 },
       hovertemplate: 'Raw: (%{x:.1f}, %{y:.1f}) cm<extra></extra>' },
     // 1: Wall lines (null-separated)
     { name: 'Nominal Wall (RANSAC)', type: 'scatter', mode: 'lines', x: [], y: [],
-      line: { color: '#ef4444', width: 2.2 },
+      line: { color: '#cc2222', width: 2.2 },
       hoverinfo: 'skip' },
     // 2: Inlier (titik dinding)
     { name: 'Titik Dinding (Inlier)', type: 'scatter', mode: 'markers', x: [], y: [],
-      marker: { color: '#3b82f6', size: 6, opacity: 0.9 },
+      marker: { color: '#1a6fb5', size: 6, opacity: 0.9 },
       hovertemplate: 'Inlier: (%{x:.1f}, %{y:.1f}) cm<extra></extra>' },
     // 3: Phantom
     { name: 'Phantom Point', type: 'scatter', mode: 'markers', x: [], y: [],
-      marker: { color: '#f97316', size: 7, opacity: 0.95, symbol: 'circle' },
+      marker: { color: '#f57c00', size: 7, opacity: 0.95 },
       hovertemplate: 'Phantom: (%{x:.1f}, %{y:.1f}) cm<extra></extra>' },
-    // 4: Pusat sensor
+    // 4: Pusat sensor (cross)
     { name: 'Posisi Sensor', type: 'scatter', mode: 'markers', x: [0], y: [0],
-      marker: { color: '#e2e8f0', size: 10, symbol: 'cross', line: { width: 2 } },
+      marker: { color: '#111827', size: 10, symbol: 'cross', line: { width: 2.5, color: '#111827' } },
       hoverinfo: 'skip', showlegend: false },
   ];
 }
@@ -278,8 +280,8 @@ function renderCurrentState() {
     {
       title: {
         text: `Pemetaan 2D (IMU Yaw)  |  ${stats.stable}/${stats.filled} sudut stabil  |  ` +
-              `Yaw: ${stats.yaw.toFixed(1)}°  |  Paket: ${stats.packets}`,
-        font: { size: 13, color: '#e2e8f0' },
+              `Yaw: ${stats.yaw.toFixed(1)}\u00b0  |  Paket: ${stats.packets}`,
+        font: { size: 13, color: '#111827' },
         x: 0.5,
       },
     }

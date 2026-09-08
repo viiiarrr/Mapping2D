@@ -32,7 +32,7 @@ jobs:
           python-version: '3.11'
 
       - name: Generate web data (copy CSV + manifest)
-        run: python generate_web_data.py
+        run: python python/generate_web_data.py
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5

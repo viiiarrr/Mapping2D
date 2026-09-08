@@ -17,8 +17,8 @@ import os
 import shutil
 import json
 
-DATA_DIR   = os.path.join(os.path.dirname(__file__), 'Data')
-WEB_DIR    = os.path.join(os.path.dirname(__file__), 'web-visualisasi', 'data')
+DATA_DIR   = os.path.join(os.path.dirname(__file__), '..', 'Data')
+WEB_DIR    = os.path.join(os.path.dirname(__file__), '..', 'web-visualisasi', 'data')
 
 def main():
     if not os.path.exists(DATA_DIR):
