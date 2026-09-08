@@ -13,20 +13,7 @@
 | **CI / CD Pipeline** | [![Deploy Web Visualisasi](https://img.shields.io/github/actions/workflow/status/viiiarrr/TugasAkhir/deploy-pages.yml?style=flat-square&label=GitHub%20Actions)](https://github.com/viiiarrr/TugasAkhir/actions) ![Status](https://img.shields.io/badge/Status-Active-success?style=flat-square) |
 | **Author** | ![viiiarrr](https://img.shields.io/badge/Author-viiiarrr-6366f1?style=flat-square) |
 
----
 
-## 📌 Tentang Proyek Ini
-
-Sistem ini adalah bagian dari Tugas Akhir yang bertujuan untuk memetakan ruang 2D secara *real-time* menggunakan gabungan sensor jarak (8 arah) dan sensor IMU (Yaw) pada board ESP32. Seluruh pergerakan alat akan ditransmisikan via UDP WiFi ke laptop, lalu diteruskan ke Web Browser untuk dirender dan dianalisa dengan algoritma canggih secara instan.
-
-### ✨ Fitur Utama
-- **Real-Time Live Mapping:** Data UDP dari ESP32 langsung dirender ke Web Browser via WebSockets.
-- **Advanced Filtering:** Menggunakan EMA (Exponential Moving Average) dan Outlier Filter untuk menstabilkan bacaan sensor.
-- **RANSAC Wall Fitting:** Algoritma Split-and-Merge dipadukan dengan RANSAC untuk mendeteksi tembok secara otomatis.
-- **Phantom Point Detection:** Mampu mendeteksi dan menandai data anomali (Phantom) yang tidak valid.
-- **Web Dashboard:** UI Web yang elegan (Light/White Mode), lengkap dengan parameter tuning, slider putar-ulang (Replay Mode), dan Export PNG.
-
----
 
 ## 📂 Struktur Repositori
 
@@ -40,32 +27,7 @@ TugasAkhir/
 └── 📜 jalankan.bat         ← Auto-runner untuk Live Mode
 ```
 
----
 
-## 🚀 Cara Menjalankan
-
-Ada 2 mode utama untuk menggunakan sistem ini: **Live Mode** (Pengambilan Data) dan **Replay Mode** (Presentasi / Lihat Data Lama).
-
-### 1️⃣ Live Mode (Pengambilan Data Real-Time)
-Sistem ini menggunakan `server.py` sebagai jembatan antara ESP32 (UDP) dengan Browser (WebSocket).
-
-1. Nyalakan ESP32 Anda dan pastikan terhubung ke jaringan Hotspot Laptop.
-2. Di laptop Anda (Windows), *double-click* file **`jalankan.bat`**.
-3. Terminal akan otomatis terbuka, dan Browser Anda akan langsung terbuka menampilkan Web Visualisasi.
-4. Peta akan mulai tergambar secara Live! Data juga otomatis tersimpan ke folder `Data/`.
-
-> **Melihat Live Data dari HP?**
-> Pastikan HP Anda di jaringan WiFi yang sama dengan laptop. Buka browser di HP dan ketik IP laptop Anda (misal: `http://192.168.137.1:8080/web-visualisasi/`).
-
-### 2️⃣ Replay Mode (Lihat Ulang Data)
-Anda tidak perlu menyalakan ESP32, dan tidak perlu `jalankan.bat`. Semua hasil rekam CSV bisa diputar ulang di web!
-
-1. Buka link web berikut: **[https://viiiarrr.github.io/TugasAkhir/web-visualisasi/](https://viiiarrr.github.io/TugasAkhir/web-visualisasi/)**
-2. Gunakan *Dropdown* "Pilih Percobaan" di sebelah kiri untuk melihat percobaan sebelumnya.
-3. Anda juga bisa men- *Drag & Drop* file `koordinat.csv` langsung ke dalam web.
-4. Gunakan Slider di bawah layar untuk memutar ulang proses pemetaan dari awal sampai akhir.
-
----
 
 ## 💻 Dependencies
 
