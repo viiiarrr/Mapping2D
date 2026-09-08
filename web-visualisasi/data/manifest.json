@@ -1,6 +1,18 @@
 {
   "experiments": [
     {
+      "id": 44,
+      "name": "Percobaan 44",
+      "file": "percobaan_44/koordinat.csv",
+      "rows": 907
+    },
+    {
+      "id": 43,
+      "name": "Percobaan 43",
+      "file": "percobaan_43/koordinat.csv",
+      "rows": 628
+    },
+    {
       "id": 42,
       "name": "Percobaan 42",
       "file": "percobaan_42/koordinat.csv",

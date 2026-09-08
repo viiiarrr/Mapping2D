@@ -570,7 +570,8 @@ window.addEventListener('resize', () => {
    WEBSOCKET (LIVE MODE)
    ============================================================ */
 function initWebSocket() {
-  ws = new WebSocket('ws://localhost:8765');
+  const wsHost = location.hostname || 'localhost';
+  ws = new WebSocket(`ws://${wsHost}:8765`);
   
   ws.onopen = () => {
     isLiveMode = true;
@@ -586,6 +587,9 @@ function initWebSocket() {
     
     // Sembunyikan replay bar di awal
     el('replay-bar').style.display = 'none';
+    
+    // Aktifkan tombol Export
+    el('btn-export').disabled = false;
     
     proc.reset();
     proc.rows = [];

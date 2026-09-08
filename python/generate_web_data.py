@@ -41,9 +41,8 @@ def main():
             continue
 
         # Hitung jumlah baris data
-        with open(src_csv, 'r') as f:
-            lines = f.readlines()
-        n_rows = max(0, len(lines) - 1)  # minus header
+        with open(src_csv, 'r', encoding='utf-8', errors='ignore') as f:
+            n_rows = max(0, sum(1 for _ in f) - 1)  # minus header
 
         # Copy ke web-visualisasi/data/
         dst_dir = os.path.join(WEB_DIR, folder)
