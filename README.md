@@ -1,6 +1,6 @@
 <div align="center">
   <h1>2D Sensor Mapper</h1>
-  <p><strong>A comprehensive real-time 2D mapping system using ESP32, IMU Yaw, and Distance Sensors.</strong></p>
+  <p><strong>A comprehensive web-based & real-time 2D mapping system using ESP32, IMU, and Distance Sensors.</strong></p>
 </div>
 
 <br />
