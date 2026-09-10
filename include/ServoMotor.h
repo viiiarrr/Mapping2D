@@ -15,8 +15,8 @@ private:
     float speedDegreesPerSecCCW;  // Kecepatan saat putar CCW (deg/s)
 
 public:
-    // Constructor
-    Servo360Motor(int pin, float speedCW = 55.0, float speedCCW = 45.0) {
+    // Constructor dengan konfigurasi default (diambil dari main.cpp sebelumnya)
+    Servo360Motor(int pin = 21, float speedCW = 55.0, float speedCCW = 45.0) {
         servoPin = pin;
         currentAngle = 0.0;
         speedDegreesPerSecCW  = speedCW;   // Hasil kalibrasi CW

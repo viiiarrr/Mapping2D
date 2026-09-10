@@ -1,5 +1,6 @@
-#include "Sensor.h"
+#include "ultrasonik.h"
 #include "ServoMotor.h"
+#include "imu.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <WiFi.h>
@@ -15,36 +16,17 @@ const int   udp_port  = 5005;
 WiFiUDP udp;
 
 // =====================
-// KONFIGURASI PIN SENSOR
+// OBJEK SENSOR & AKTUATOR
 // =====================
-const int trigPins[NUM_SENSOR] = {19, 5, 4, 23, 22, 25, 27, 12};
-const int echoPins[NUM_SENSOR] = {18, 35, 34, 32, 33, 26, 14, 13};
-
-// =====================
-// SERVO
-// =====================
-#define SERVO_PIN       21
-#define SERVO_SPEED_CW  55.0
-#define SERVO_SPEED_CCW 45.0
+Servo360Motor servo;
+Sensor ultrasonicArray;
+ImuSensor imu;
 
 // =====================
 // HOMING
 // =====================
 #define HOMING_PIN 15
 volatile unsigned long sweepStartTime = 0;
-
-// =====================
-// IMU — PIN I2C (hasil scan)
-// =====================
-#define I2C_SDA 16
-#define I2C_SCL 17
-#define MPU     0x68
-
-// =====================
-// OBJEK
-// =====================
-Servo360Motor servo(SERVO_PIN, SERVO_SPEED_CW, SERVO_SPEED_CCW);
-Sensor ultrasonicArray(trigPins, echoPins);
 
 // =====================
 // STATE ARAH SERVO
@@ -54,59 +36,7 @@ MotorState currentState = DIR_CW;
 float sweepStartYaw = 0;   // Yaw saat mulai sweep
 #define SWEEP_DEG 720.0    // 2 putaran penuh = 720°
 
-// =====================
-// VARIABEL IMU
-// =====================
-float gyroZ_offset = 0;
-float yaw          = 0;
-float prevTime     = 0, currTime = 0, elapsedTime = 0;
-float currentAngle = 0;
 
-// =====================
-// KALIBRASI GYRO Z
-// Harus dilakukan saat alat DATAR & DIAM
-// =====================
-void calibrateGyroZ() {
-    Serial.println("[IMU] Kalibrasi GyroZ... Jangan gerakkan alat!");
-    long sum = 0;
-    for (int i = 0; i < 300; i++) {
-        Wire.beginTransmission(MPU);
-        Wire.write(0x47);  // GYRO_ZOUT_H
-        Wire.endTransmission(false);
-        Wire.requestFrom(MPU, 2);
-        int16_t raw = Wire.read() << 8 | Wire.read();
-        sum += raw;
-        delay(10);
-    }
-    gyroZ_offset = (float)sum / 300.0 / 131.0;
-    yaw = 0;  // Reset yaw setelah kalibrasi
-    Serial.print("[IMU] GyroZ offset: ");
-    Serial.print(gyroZ_offset, 4);
-    Serial.println(" deg/s  — Kalibrasi selesai!");
-}
-
-// =====================
-// UPDATE YAW dari IMU
-// =====================
-void updateYaw() {
-    prevTime    = currTime;
-    currTime    = millis();
-    elapsedTime = (currTime - prevTime) / 1000.0;
-
-    Wire.beginTransmission(MPU);
-    Wire.write(0x47);  // GYRO_ZOUT_H
-    Wire.endTransmission(false);
-    Wire.requestFrom(MPU, 2);
-    int16_t rawZ = Wire.read() << 8 | Wire.read();
-
-    float gyroZ = (float)rawZ / 131.0 - gyroZ_offset;
-
-    // Dead-band: noise kecil di bawah 0.8 deg/s diabaikan
-    if (abs(gyroZ) < 0.8) gyroZ = 0;
-
-    yaw += gyroZ * elapsedTime;
-    currentAngle = yaw;
-}
 
 void IRAM_ATTR homingISR() {
     if (millis() - sweepStartTime > 500) {
@@ -115,8 +45,10 @@ void IRAM_ATTR homingISR() {
 }
 
 void bacaDanKirim() {
-    updateYaw();
+    imu.update();
     ultrasonicArray.readAll();
+
+    float currentAngle = imu.getYaw();
 
     // Format: sudut_platform,jarak1,...,jarak8
     String out = String(currentAngle, 1) + ",";
@@ -159,21 +91,12 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(HOMING_PIN), homingISR, FALLING);
 
     // IMU
-    Wire.begin(I2C_SDA, I2C_SCL);
-    delay(200);
-    Wire.beginTransmission(MPU);
-    Wire.write(0x6B);
-    Wire.write(0x00);  // Wake up MPU6050
-    Wire.endTransmission(true);
-    delay(100);
-    calibrateGyroZ();
+    imu.begin();
 
     // Servo
     servo.begin();
     delay(1500);
     servo.resetAngle();
-
-    currTime = millis();
 
     Serial.println("=== MULAI PEMETAAN — SERVO BERPUTAR ===");
     sweepStartTime = millis();
@@ -182,24 +105,25 @@ void setup() {
 
 void loop() {
     // Update yaw dari IMU
-    updateYaw();
+    imu.update();
+    float currentAngle = imu.getYaw();
 
     // Pakai abs agar berlaku untuk CW (yaw negatif) maupun CCW (yaw positif)
-    float yawTraveled = abs(yaw - sweepStartYaw);
+    float yawTraveled = abs(currentAngle - sweepStartYaw);
 
     if (yawTraveled >= SWEEP_DEG) {
         if (currentState == DIR_CW) {
             Serial.println(">> 2 Putaran CW selesai — Berbalik ke CCW");
             servo.stop();
             delay(500);
-            sweepStartYaw = yaw;  // Catat titik awal sweep baru (TIDAK reset yaw)
+            sweepStartYaw = currentAngle;  // Catat titik awal sweep baru (TIDAK reset yaw)
             currentState  = DIR_CCW;
             servo.rotateCCW();
         } else {
             Serial.println(">> 2 Putaran CCW selesai — Berbalik ke CW");
             servo.stop();
             delay(500);
-            sweepStartYaw = yaw;  // Catat titik awal sweep baru (TIDAK reset yaw)
+            sweepStartYaw = currentAngle;  // Catat titik awal sweep baru (TIDAK reset yaw)
             currentState  = DIR_CW;
             servo.rotateCW();
         }
@@ -208,7 +132,6 @@ void loop() {
 
     // Baca sensor & kirim
     ultrasonicArray.readAll();
-    currentAngle = yaw;
 
     // Format: sudut_platform,jarak1,...,jarak8
     String out = String(currentAngle, 1) + ",";

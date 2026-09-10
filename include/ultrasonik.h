@@ -51,6 +51,17 @@ public:
         }
     }
 
+    // Constructor default dengan konfigurasi pin langsung (diambil dari main.cpp)
+    Sensor() {
+        const int defaultTrig[NUM_SENSOR] = {19, 5, 4, 23, 22, 25, 27, 12};
+        const int defaultEcho[NUM_SENSOR] = {18, 35, 34, 32, 33, 26, 14, 13};
+        for (int i = 0; i < NUM_SENSOR; i++) {
+            trigPins[i] = defaultTrig[i];
+            echoPins[i] = defaultEcho[i];
+            distanceVal[i] = 0.0;
+        }
+    }
+
     void begin() {
         for (int i = 0; i < NUM_SENSOR; i++) {
             pinMode(trigPins[i], OUTPUT);

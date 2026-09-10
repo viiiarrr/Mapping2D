@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>🗺️ 2D Sensor Mapper</h1>
+  <h1>2D Sensor Mapper</h1>
   <p><strong>A comprehensive real-time 2D mapping system using ESP32, IMU Yaw, and Distance Sensors.</strong></p>
 </div>
 
@@ -35,6 +35,3 @@ TugasAkhir/
 - **Firmware:** PlatformIO (Arduino Framework).
 - **Backend (Python 3.12+):** `websockets`, `numpy`, `matplotlib`
 - **Frontend (Web):** *Vanilla JS*, Plotly.js (via CDN).
-
----
-<p align="center"><i>Dibuat untuk kebutuhan Skripsi/Tugas Akhir.</i></p>

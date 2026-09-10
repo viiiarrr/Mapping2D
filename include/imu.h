@@ -1,5 +1,5 @@
-#ifndef IMU_SENSOR_H
-#define IMU_SENSOR_H
+#ifndef IMU_H
+#define IMU_H
 
 #include <Wire.h>
 #include <Arduino.h>
@@ -71,7 +71,7 @@ private:
     }
 
 public:
-    ImuSensor(int sda, int scl) : sdaPin(sda), sclPin(scl) {
+    ImuSensor(int sda = 16, int scl = 17) : sdaPin(sda), sclPin(scl) {
         roll = 0;
         pitch = 0;
         yaw = 0;
@@ -147,6 +147,9 @@ public:
         GyroY = GyroY - GyroErrorY;
         GyroZ = GyroZ - GyroErrorZ;
 
+        // Dead-band: noise kecil diabaikan (mengikuti logika awal main.cpp)
+        if (abs(GyroZ) < 0.8) GyroZ = 0;
+
         gyroAngleX = gyroAngleX + GyroX * elapsedTime;
         gyroAngleY = gyroAngleY + GyroY * elapsedTime;
         yaw        = yaw        + GyroZ * elapsedTime;
@@ -161,4 +164,4 @@ public:
     float getYaw()   { return yaw; }
 };
 
-#endif // IMU_SENSOR_H
+#endif // IMU_H
